@@ -80,7 +80,12 @@ function _osClientVarsScan() {
         producers: producersData.producers || []
       });
     }
-
+    // Capture the OutSystems runtime reference for date/time conversion
+    try {
+      require(["OutSystems/ClientRuntime/Main"], function (OutSystems) {
+        window.__osRuntime = OutSystems.Internal;
+      });
+    } catch (e) { /* runtime not available */ }
     // Safety timeout — resolve with whatever we’ve collected so far
     setTimeout(() => {
       if (!resolved) {
@@ -107,8 +112,21 @@ function _osClientVarsScan() {
               let value;
               let valueType = "Text"; // default
               try {
+                // Detect exact Date/Time/DateTime type from getter source code
+                // (the OS runtime embeds DataTypes.Date, DataTypes.Time, DataTypes.DateTime)
+                try {
+                  const getterSrc = mod[key].toString();
+                  if (getterSrc.includes("DataTypes.DateTime")) valueType = "Date Time";
+                  else if (getterSrc.includes("DataTypes.Date")) valueType = "Date";
+                  else if (getterSrc.includes("DataTypes.Time")) valueType = "Time";
+                } catch (srcErr) { /* source inspection failed, will detect from value */ }
+
                 value = mod[key]();
-                valueType = _detectOsType(value);
+
+                // If type wasn't detected from source, detect from value
+                if (valueType === "Text") {
+                  valueType = _detectOsType(value);
+                }
               } catch (e) {
                 value = null;
                 valueType = "Error";
@@ -292,6 +310,10 @@ function _detectOsType(value) {
     return Number.isInteger(value) ? "Integer" : "Decimal";
   }
   if (value instanceof Date) return "Date Time";
+  // Duck-type Date-like objects (cross-frame Date or OutSystems date wrappers)
+  if (typeof value === "object" && typeof value.getTime === "function" && !isNaN(value.getTime())) {
+    return "Date Time";
+  }
   if (typeof value === "string") {
     // Try to detect date / time patterns
     if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) return "Date Time";
@@ -326,10 +348,77 @@ function _coerceValue(raw, varType) {
     case "Date":
     case "Time":
     case "Date Time":
-      return { value: raw }; // OutSystems typically stores these as ISO strings
+      return _coerceDateValue(raw, varType);
     default:
       return { value: String(raw) };
   }
+}
+
+/**
+ * Convert a raw date/time string from the HTML input into the value
+ * expected by the OutSystems clientVarsService.setVariable().
+ *
+ * Strategy:
+ *  1. Use the OS runtime ServerDataConverter.from() when available — this
+ *     produces the exact internal representation the platform expects.
+ *  2. Fall back to constructing a Date with explicit numeric components
+ *     (matching the pattern the OS built-ins like CurrDate() use).
+ */
+function _coerceDateValue(raw, varType) {
+  // --- Attempt 1: OutSystems ServerDataConverter.from() -----------------
+  const OS = window.__osRuntime;
+  if (OS && OS.DataConversion && OS.DataConversion.ServerDataConverter) {
+    try {
+      const typeEnum =
+        varType === "Date"      ? OS.DataTypes.DataTypes.Date :
+        varType === "Time"      ? OS.DataTypes.DataTypes.Time :
+                                  OS.DataTypes.DataTypes.DateTime;
+
+      // Build a server-format string from the HTML input value
+      let serverStr;
+      if (varType === "Date") {
+        // HTML date input: "YYYY-MM-DD"
+        serverStr = raw;
+      } else if (varType === "Time") {
+        // HTML time input: "HH:MM" or "HH:MM:SS"
+        serverStr = raw.length === 5 ? raw + ":00" : raw;
+      } else {
+        // HTML datetime-local input: "YYYY-MM-DDTHH:MM" or "YYYY-MM-DDTHH:MM:SS"
+        serverStr = raw;
+      }
+
+      const converted = OS.DataConversion.ServerDataConverter.from(serverStr, typeEnum);
+      if (converted !== undefined && converted !== null) {
+        return { value: converted };
+      }
+    } catch (e) {
+      // ServerDataConverter.from() failed — fall through to manual
+    }
+  }
+
+  // --- Attempt 2: construct Date with numeric components ----------------
+  if (varType === "Date") {
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return { error: "Invalid date: " + raw };
+    const d = new Date(+m[1], +m[2] - 1, +m[3]);
+    if (isNaN(d.getTime())) return { error: "Invalid date: " + raw };
+    return { value: d };
+  }
+
+  if (varType === "Time") {
+    const m = raw.match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (!m) return { error: "Invalid time: " + raw };
+    const d = new Date(1900, 0, 1, +m[1], +m[2], m[3] ? +m[3] : 0);
+    if (isNaN(d.getTime())) return { error: "Invalid time: " + raw };
+    return { value: d };
+  }
+
+  // Date Time
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!m) return { error: "Invalid date/time: " + raw };
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], m[6] ? +m[6] : 0);
+  if (isNaN(d.getTime())) return { error: "Invalid date/time: " + raw };
+  return { value: d };
 }
 
 /**
@@ -342,6 +431,16 @@ function _safeSerialize(value) {
     return value;
   }
   if (value instanceof Date) return value.toISOString();
+  // Duck-type Date-like objects (cross-frame Date or OutSystems date wrappers)
+  if (typeof value === "object" && typeof value.getTime === "function") {
+    try {
+      const ts = value.getTime();
+      if (!isNaN(ts)) return new Date(ts).toISOString();
+    } catch (e) { /* fall through */ }
+  }
+  if (typeof value === "object" && typeof value.toISOString === "function") {
+    try { return value.toISOString(); } catch (e) { /* fall through */ }
+  }
   try {
     return JSON.parse(JSON.stringify(value));
   } catch {

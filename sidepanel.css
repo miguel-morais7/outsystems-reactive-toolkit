@@ -471,6 +471,24 @@ body {
   cursor: default;
 }
 
+/* Date / Time / DateTime inputs */
+.var-value-date {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 6px;
+  min-width: 120px;
+}
+
+.var-value-date::-webkit-calendar-picker-indicator {
+  filter: grayscale(1);
+  opacity: .6;
+  cursor: pointer;
+}
+
+.var-value-date::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
 /* Boolean toggle */
 .bool-toggle {
   position: relative;

@@ -255,6 +255,20 @@ function buildVarRow(v) {
               ${v.readOnly ? "disabled" : ""}>
         <span class="knob"></span>
       </button>`;
+  } else if (v.type === "Date" || v.type === "Time" || v.type === "Date Time") {
+    const inputType = v.type === "Date" ? "date" : v.type === "Time" ? "time" : "datetime-local";
+    const displayValue = formatDateForInput(v.value, v.type);
+    valueControl = `
+      <input class="var-value var-value-date"
+             type="${inputType}"
+             value="${escAttr(displayValue)}"
+             data-module="${esc(v.module)}"
+             data-name="${esc(v.name)}"
+             data-type="${esc(v.type)}"
+             data-original="${escAttr(displayValue)}"
+             ${v.readOnly ? "readonly" : ""}
+             ${v.type === "Time" ? 'step="1"' : ""}
+             title="${v.readOnly ? "Read-only" : "Edit to save"}" />`;
   } else {
     const displayValue = v.value === null ? "" : String(v.value);
     valueControl = `
@@ -279,6 +293,40 @@ function buildVarRow(v) {
         ${valueControl}
       </div>
     </div>`;
+}
+
+/**
+ * Convert an ISO date string to the format required by HTML date/time inputs.
+ */
+function formatDateForInput(isoString, type) {
+  if (!isoString) return "";
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return "";
+    if (type === "Date") {
+      // HTML date input expects YYYY-MM-DD (local date)
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    } else if (type === "Time") {
+      // HTML time input expects HH:MM or HH:MM:SS
+      const h = String(d.getHours()).padStart(2, "0");
+      const min = String(d.getMinutes()).padStart(2, "0");
+      const s = String(d.getSeconds()).padStart(2, "0");
+      return `${h}:${min}:${s}`;
+    } else {
+      // Date Time → datetime-local expects YYYY-MM-DDTHH:MM
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      const h = String(d.getHours()).padStart(2, "0");
+      const min = String(d.getMinutes()).padStart(2, "0");
+      return `${y}-${m}-${day}T${h}:${min}`;
+    }
+  } catch {
+    return "";
+  }
 }
 
 /* ================================================================== */
@@ -385,6 +433,15 @@ varList.addEventListener("keydown", (e) => {
 
 varList.addEventListener("focusout", (e) => {
   const input = e.target.closest("input.var-value:not([readonly])");
+  if (!input) return;
+  if (input.value !== input.dataset.original) {
+    commitInput(input);
+  }
+});
+
+// Date/time/datetime inputs fire "change" when the user picks a value
+varList.addEventListener("change", (e) => {
+  const input = e.target.closest("input.var-value-date:not([readonly])");
   if (!input) return;
   if (input.value !== input.dataset.original) {
     commitInput(input);
