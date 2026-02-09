@@ -107,7 +107,7 @@ async function doScan() {
 
     const parts = [];
     if (varState.count > 0) {
-      const varText = varState.count === 1 ? "variable" : "variables";
+      const varText = varState.count === 1 ? "client variable" : "client variables";
       const modText = varState.moduleCount === 1 ? "module" : "modules";
       parts.push(`${varState.count} ${varText} in ${varState.moduleCount} ${modText}`);
     }
