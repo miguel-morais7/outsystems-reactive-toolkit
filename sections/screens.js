@@ -4,10 +4,12 @@
  * Manages state, rendering, and event delegation for the
  * screen-navigation panel. Supports expandable screen rows
  * that display screen variables, aggregates, and actions.
+ * For the current screen, variables show live runtime values
+ * and can be edited inline.
  */
 
 import { esc, escAttr, debounce, sendMessage } from '../utils/helpers.js';
-import { show, hide } from '../utils/ui.js';
+import { show, hide, flashRow, toast } from '../utils/ui.js';
 
 /* ================================================================== */
 /*  State                                                              */
@@ -32,6 +34,11 @@ const emptyState = document.getElementById("empty-state");
 export const sectionEl = document.getElementById("screen-section");
 
 /* ================================================================== */
+/*  Read-only data types                                               */
+/* ================================================================== */
+const READ_ONLY_TYPES = ["RecordList", "Record", "Object", "BinaryData"];
+
+/* ================================================================== */
 /*  Public API                                                         */
 /* ================================================================== */
 
@@ -45,6 +52,18 @@ export function init() {
     if (navBtn) {
       e.stopPropagation();
       sendMessage({ action: "NAVIGATE", url: navBtn.dataset.url });
+      return;
+    }
+
+    // Boolean toggle for screen vars
+    const boolBtn = e.target.closest(".screen-var-toggle:not([disabled])");
+    if (boolBtn) {
+      e.stopPropagation();
+      const isActive = boolBtn.classList.contains("active");
+      const newVal = !isActive;
+      boolBtn.classList.toggle("active", newVal);
+      const row = boolBtn.closest(".screen-var-row");
+      doSetScreenVar(boolBtn.dataset.internalName, newVal, "Boolean", row);
       return;
     }
 
@@ -66,6 +85,38 @@ export function init() {
       const isCollapsed = header.classList.toggle("collapsed");
       body.classList.toggle("collapsed", isCollapsed);
       collapsedScreenFlows[mod] = isCollapsed;
+    }
+  });
+
+  /* Keyboard: Enter → save, Escape → revert */
+  screenList.addEventListener("keydown", (e) => {
+    const input = e.target.closest("input.screen-var-input:not([readonly])");
+    if (!input) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitScreenVarInput(input);
+    }
+    if (e.key === "Escape") {
+      input.value = input.dataset.original;
+      input.blur();
+    }
+  });
+
+  /* Blur → save if value changed */
+  screenList.addEventListener("focusout", (e) => {
+    const input = e.target.closest("input.screen-var-input:not([readonly])");
+    if (!input) return;
+    if (input.value !== input.dataset.original) {
+      commitScreenVarInput(input);
+    }
+  });
+
+  /* Date/time/datetime pickers fire "change" */
+  screenList.addEventListener("change", (e) => {
+    const input = e.target.closest("input.screen-var-date:not([readonly])");
+    if (!input) return;
+    if (input.value !== input.dataset.original) {
+      commitScreenVarInput(input);
     }
   });
 }
@@ -178,7 +229,7 @@ function buildScreenRow(s) {
     if (isLoading) {
       html += `<div class="screen-details-loading"><span class="mini-spinner"></span> Loading...</div>`;
     } else if (s.details) {
-      html += buildScreenDetails(s.details);
+      html += buildScreenDetails(s.details, isCurrent);
     }
     html += `</div>`;
   }
@@ -186,7 +237,7 @@ function buildScreenRow(s) {
   return html;
 }
 
-function buildScreenDetails(details) {
+function buildScreenDetails(details, isCurrent) {
   let html = "";
 
   // Input Parameters
@@ -194,10 +245,7 @@ function buildScreenDetails(details) {
     html += `<div class="screen-detail-section">`;
     html += `<div class="screen-detail-header">Input Parameters</div>`;
     for (const v of details.inputParameters) {
-      html += `<div class="screen-detail-item">
-        <span class="screen-detail-name">${esc(v.name)}</span>
-        <span class="screen-detail-type">${esc(v.type)}</span>
-      </div>`;
+      html += buildScreenVarItem(v, isCurrent);
     }
     html += `</div>`;
   }
@@ -207,10 +255,7 @@ function buildScreenDetails(details) {
     html += `<div class="screen-detail-section">`;
     html += `<div class="screen-detail-header">Local Variables</div>`;
     for (const v of details.localVariables) {
-      html += `<div class="screen-detail-item">
-        <span class="screen-detail-name">${esc(v.name)}</span>
-        <span class="screen-detail-type">${esc(v.type)}</span>
-      </div>`;
+      html += buildScreenVarItem(v, isCurrent);
     }
     html += `</div>`;
   }
@@ -274,6 +319,156 @@ function buildScreenDetails(details) {
   return html;
 }
 
+/**
+ * Build a single variable/input param item.
+ * If isCurrent is true and the variable has a live value, show editable controls.
+ */
+function buildScreenVarItem(v, isCurrent) {
+  const isReadOnly = READ_ONLY_TYPES.includes(v.type);
+  const hasLiveValue = isCurrent && v.value !== undefined;
+
+  // If not the current screen or no live value, show simple display
+  if (!hasLiveValue) {
+    return `<div class="screen-detail-item">
+      <span class="screen-detail-name">${esc(v.name)}</span>
+      <span class="screen-detail-type">${esc(v.type)}</span>
+    </div>`;
+  }
+
+  // Current screen with live value — show editable control
+  let valueControl = "";
+
+  if (v.type === "Boolean" && !isReadOnly) {
+    const active = v.value === true || v.value === "true" || v.value === "True";
+    valueControl = `
+      <button class="bool-toggle screen-var-toggle ${active ? "active" : ""}"
+              data-internal-name="${escAttr(v.internalName)}" data-type="Boolean"
+              ${isReadOnly ? "disabled" : ""}>
+        <span class="knob"></span>
+      </button>`;
+  } else if ((v.type === "Date" || v.type === "Time" || v.type === "Date Time") && !isReadOnly) {
+    const inputType = v.type === "Date" ? "date" : v.type === "Time" ? "time" : "datetime-local";
+    const displayValue = formatDateForInput(v.value, v.type);
+    valueControl = `
+      <input class="var-value var-value-date screen-var-date"
+             type="${inputType}"
+             value="${escAttr(displayValue)}"
+             data-internal-name="${escAttr(v.internalName)}"
+             data-type="${esc(v.type)}"
+             data-original="${escAttr(displayValue)}"
+             ${isReadOnly ? "readonly" : ""}
+             ${v.type === "Time" ? 'step="1"' : ""}
+             title="${isReadOnly ? "Read-only" : "Edit to save"}" />`;
+  } else {
+    const displayValue = isReadOnly ? ("[" + v.type + "]") :
+      (v.value === null ? "" : String(v.value));
+    valueControl = `
+      <input class="var-value screen-var-input"
+             type="text"
+             value="${escAttr(displayValue)}"
+             data-internal-name="${escAttr(v.internalName)}"
+             data-type="${esc(v.type)}"
+             data-original="${escAttr(displayValue)}"
+             ${isReadOnly ? "readonly" : ""}
+             title="${isReadOnly ? "Read-only (" + v.type + ")" : "Press Enter to save"}" />`;
+  }
+
+  return `<div class="screen-detail-item screen-var-row" data-internal-name="${escAttr(v.internalName)}">
+    <div class="screen-var-info">
+      <span class="screen-detail-name">${esc(v.name)}</span>
+      <span class="screen-detail-type">${esc(v.type)}${isReadOnly ? " · read-only" : ""}</span>
+    </div>
+    <div class="screen-var-value-wrap">
+      ${valueControl}
+    </div>
+  </div>`;
+}
+
+/**
+ * Convert an ISO date string to the format required by HTML date/time inputs.
+ */
+function formatDateForInput(isoString, type) {
+  if (!isoString) return "";
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return "";
+    if (type === "Date") {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    } else if (type === "Time") {
+      const h = String(d.getHours()).padStart(2, "0");
+      const min = String(d.getMinutes()).padStart(2, "0");
+      const s = String(d.getSeconds()).padStart(2, "0");
+      return `${h}:${min}:${s}`;
+    } else {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      const h = String(d.getHours()).padStart(2, "0");
+      const min = String(d.getMinutes()).padStart(2, "0");
+      return `${y}-${m}-${day}T${h}:${min}`;
+    }
+  } catch {
+    return "";
+  }
+}
+
+/** Send a SET_SCREEN_VAR message and handle the response. */
+async function doSetScreenVar(internalName, rawValue, dataType, rowEl) {
+  try {
+    const result = await sendMessage({
+      action: "SET_SCREEN_VAR",
+      internalName,
+      value: rawValue,
+      dataType,
+    });
+
+    if (!result || !result.ok) {
+      throw new Error(result?.error || "Failed to set value.");
+    }
+
+    // Update cached live value
+    updateCachedVarValue(internalName, result.newValue);
+
+    flashRow(rowEl, "saved");
+    toast(`Variable updated`, "success");
+    return true;
+  } catch (err) {
+    flashRow(rowEl, "error");
+    toast(err.message, "error");
+    return false;
+  }
+}
+
+/** Commit an input's value to the runtime. */
+async function commitScreenVarInput(input) {
+  const row = input.closest(".screen-var-row");
+  const ok = await doSetScreenVar(
+    input.dataset.internalName, input.value, input.dataset.type, row
+  );
+  if (ok) {
+    input.dataset.original = input.value;
+  } else {
+    input.value = input.dataset.original;
+  }
+}
+
+/** Update the cached variable value in the screen's details. */
+function updateCachedVarValue(internalName, newValue) {
+  for (const screen of allScreens) {
+    if (screen.details) {
+      for (const v of [...screen.details.inputParameters, ...screen.details.localVariables]) {
+        if (v.internalName === internalName) {
+          v.value = newValue;
+          return;
+        }
+      }
+    }
+  }
+}
+
 async function toggleScreenExpand(screenUrl, flow, screenName) {
   // Toggle expansion
   expandedScreens[screenUrl] = !expandedScreens[screenUrl];
@@ -287,6 +482,8 @@ async function toggleScreenExpand(screenUrl, flow, screenName) {
     render();
     return;
   }
+
+  const isCurrent = screenUrl === currentScreen;
 
   // Always fetch fresh details when expanding
   loadingScreens[screenUrl] = true;
@@ -302,17 +499,24 @@ async function toggleScreenExpand(screenUrl, flow, screenName) {
     });
 
     if (response.ok) {
+      const details = {
+        inputParameters: response.inputParameters || [],
+        localVariables: response.localVariables || [],
+        aggregates: response.aggregates || [],
+        dataActions: response.dataActions || [],
+        serverActions: response.serverActions || [],
+        screenActions: response.screenActions || [],
+      };
+
+      // If this is the current screen, fetch live runtime values
+      if (isCurrent) {
+        await fetchLiveValues(details);
+      }
+
       // Store details directly on the screen object
       const screen = allScreens.find(s => s.screenUrl === screenUrl);
       if (screen) {
-        screen.details = {
-          inputParameters: response.inputParameters || [],
-          localVariables: response.localVariables || [],
-          aggregates: response.aggregates || [],
-          dataActions: response.dataActions || [],
-          serverActions: response.serverActions || [],
-          screenActions: response.screenActions || [],
-        };
+        screen.details = details;
       }
     } else {
       // Store error details
@@ -347,4 +551,62 @@ async function toggleScreenExpand(screenUrl, flow, screenName) {
 
   loadingScreens[screenUrl] = false;
   render();
+}
+
+/**
+ * Fetch live runtime values for the current screen's variables.
+ * Merges the live values back into the details object.
+ */
+async function fetchLiveValues(details) {
+  // Build varDefs from parsed metadata
+  const varDefs = [
+    ...details.inputParameters.map(v => ({
+      name: v.name,
+      internalName: v.internalName,
+      type: v.type,
+      isInput: true,
+    })),
+    ...details.localVariables.map(v => ({
+      name: v.name,
+      internalName: v.internalName,
+      type: v.type,
+      isInput: false,
+    })),
+  ];
+
+  if (varDefs.length === 0) return;
+
+  try {
+    const result = await sendMessage({
+      action: "GET_SCREEN_VARS",
+      varDefs,
+    });
+
+    if (result && result.ok && result.variables) {
+      // Merge live values back into details
+      const valueMap = {};
+      for (const v of result.variables) {
+        valueMap[v.internalName] = v;
+      }
+
+      for (const v of details.inputParameters) {
+        const live = valueMap[v.internalName];
+        if (live) {
+          v.value = live.value;
+          v.readOnly = live.readOnly;
+        }
+      }
+
+      for (const v of details.localVariables) {
+        const live = valueMap[v.internalName];
+        if (live) {
+          v.value = live.value;
+          v.readOnly = live.readOnly;
+        }
+      }
+    }
+  } catch (e) {
+    // Silently fail — the screen details will still show without live values
+    console.warn("[Screens] Failed to fetch live values:", e.message);
+  }
 }

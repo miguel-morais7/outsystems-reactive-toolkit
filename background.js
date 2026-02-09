@@ -64,6 +64,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
+
+  if (message.action === "GET_SCREEN_VARS") {
+    handleGetScreenVars(message.varDefs)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.action === "SET_SCREEN_VAR") {
+    handleSetScreenVar(message.internalName, message.value, message.dataType)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
 });
 
 /* ------------------------------------------------------------------ */
@@ -372,14 +386,15 @@ async function handleFetchScreenDetails(baseUrl, moduleName, flow, screenName) {
   const seenVars = new Set();
   while ((match = varPattern.exec(scriptText)) !== null) {
     const displayName = match[1];
+    const internalName = match[2];
     const dataType = match[3];
     // Skip aggregate/data action outputs (they have "Aggr" or "DataAct" in internal name)
     // Skip internal DataFetchStatus variables
-    if (!seenVars.has(displayName) && !match[2].includes("Aggr") && !match[2].includes("DataAct") && !displayName.startsWith("_")) {
+    if (!seenVars.has(displayName) && !internalName.includes("Aggr") && !internalName.includes("DataAct") && !displayName.startsWith("_")) {
       if (inputParamNames.has(displayName)) {
-        result.inputParameters.push({ name: displayName, type: dataType });
+        result.inputParameters.push({ name: displayName, internalName, type: dataType });
       } else {
-        result.localVariables.push({ name: displayName, type: dataType });
+        result.localVariables.push({ name: displayName, internalName, type: dataType });
       }
       seenVars.add(displayName);
     }
@@ -433,6 +448,48 @@ async function handleFetchScreenDetails(baseUrl, moduleName, flow, screenName) {
   }
 
   return result;
+}
+
+/* ------------------------------------------------------------------ */
+/*  GET SCREEN VARS (live runtime values via React fiber)              */
+/* ------------------------------------------------------------------ */
+async function handleGetScreenVars(varDefs) {
+  const tab = await getActiveTab();
+  await ensurePageScriptInjected(tab.id);
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    func: (defs) => _osScreenVarsGet(defs),
+    args: [varDefs],
+  });
+
+  const data = extractScriptResult(results);
+  if (data === undefined) {
+    return { ok: false, error: "Could not access page — is it a restricted URL?" };
+  }
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  SET SCREEN VAR (write a value via React fiber)                     */
+/* ------------------------------------------------------------------ */
+async function handleSetScreenVar(internalName, value, dataType) {
+  const tab = await getActiveTab();
+  await ensurePageScriptInjected(tab.id);
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    func: (name, val, type) => _osScreenVarsSet(name, val, type),
+    args: [internalName, value, dataType],
+  });
+
+  const data = extractScriptResult(results);
+  if (data === undefined) {
+    return { ok: false, error: "Could not access page — is it a restricted URL?" };
+  }
+  return data;
 }
 
 /* ------------------------------------------------------------------ */

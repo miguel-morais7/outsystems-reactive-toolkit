@@ -916,4 +916,66 @@ body {
   padding: 3px 8px;
   border-radius: 10px;
   border: 1px solid rgba(228, 62, 43, 0.2);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ */
+/*  EDITABLE SCREEN VARIABLES                                          */
+/* ------------------------------------------------------------------ */
+
+.screen-var-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+}
+
+.screen-var-row:hover {
+  background: rgba(228, 62, 43, 0.08);
+}
+
+.screen-var-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.screen-var-value-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 180px;
+}
+
+.screen-var-value-wrap .var-value,
+.screen-var-value-wrap .var-value-date {
+  font-size: 12px;
+  padding: 3px 6px;
+  min-width: 70px;
+}
+
+.screen-var-value-wrap .bool-toggle {
+  width: 32px;
+  height: 18px;
+}
+
+.screen-var-value-wrap .bool-toggle .knob {
+  width: 14px;
+  height: 14px;
+}
+
+.screen-var-value-wrap .bool-toggle.active .knob {
+  transform: translateX(14px);
+}
+
+/* Flash animation for screen var rows */
+.screen-var-row.saved {
+  animation: flash-green .6s ease;
+}
+
+.screen-var-row.error {
+  animation: flash-red .6s ease;
 }

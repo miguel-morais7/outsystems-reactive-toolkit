@@ -43,9 +43,9 @@ function _osClientVarsScan() {
     if (moduleMap.size === 0) {
       // Still wait for producers scan even if no client vars
       const producersData = await producersPromise;
-      resolve({ 
-        ok: true, 
-        modules: [], 
+      resolve({
+        ok: true,
+        modules: [],
         variables: [],
         producerModules: producersData.producerModules || [],
         producers: producersData.producers || []
@@ -68,13 +68,13 @@ function _osClientVarsScan() {
           ? a.name.localeCompare(b.name)
           : a.module.localeCompare(b.module)
       );
-      
+
       // Wait for producers scan to complete
       const producersData = await producersPromise;
-      
-      resolve({ 
-        ok: true, 
-        modules: moduleList, 
+
+      resolve({
+        ok: true,
+        modules: moduleList,
         variables: allVars,
         producerModules: producersData.producerModules || [],
         producers: producersData.producers || []
@@ -294,6 +294,224 @@ function _osProducersScan() {
 }
 
 /* ------------------------------------------------------------------ */
+/*  GET SCREEN VARS — read live values from the current screen         */
+/* ------------------------------------------------------------------ */
+/**
+ * Finds the live OutSystems View component via React fiber traversal,
+ * then reads all variable values from controller.model.variables.
+ *
+ * @param {Array} varDefs - Array of {name, internalName, type, isInput} from
+ *        the parsed .mvc.js file (provided by background.js).
+ * @returns {Object} { ok, variables: [{name, internalName, type, isInput, value, readOnly}] }
+ */
+function _osScreenVarsGet(varDefs) {
+  try {
+    const model = _findCurrentScreenModel();
+    if (!model) {
+      return { ok: false, error: "Could not find the active screen's model. Is the screen loaded?" };
+    }
+
+    const READ_ONLY_TYPES = ["RecordList", "Record", "Object", "BinaryData"];
+    const variables = [];
+
+    for (const def of varDefs) {
+      const isReadOnly = READ_ONLY_TYPES.includes(def.type);
+      let value = null;
+      try {
+        const raw = model.variables[def.internalName];
+        value = isReadOnly ? ("[" + def.type + "]") : _safeSerialize(raw);
+      } catch (e) {
+        value = null;
+      }
+
+      variables.push({
+        name: def.name,
+        internalName: def.internalName,
+        type: def.type,
+        isInput: def.isInput,
+        value: value,
+        readOnly: isReadOnly,
+      });
+    }
+
+    return { ok: true, variables };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  SET SCREEN VAR — write a value to a live screen variable           */
+/* ------------------------------------------------------------------ */
+/**
+ * Sets a screen variable value on the live model and triggers re-render.
+ *
+ * @param {string} internalName - The internal variable name (e.g. "thisIsMyTextVarVar")
+ * @param {*} rawValue - The new value
+ * @param {string} dataType - The OS data type (Text, Integer, Boolean, etc.)
+ * @returns {Object} { ok, newValue }
+ */
+function _osScreenVarsSet(internalName, rawValue, dataType) {
+  try {
+    const viewInstance = _findCurrentScreenViewInstance();
+    if (!viewInstance) {
+      return { ok: false, error: "Could not find the active screen's view instance." };
+    }
+
+    const model = viewInstance.model;
+    if (!model || !model.variables) {
+      return { ok: false, error: "Screen model not found." };
+    }
+
+    // Coerce the value to the appropriate type
+    const coerced = _coerceValue(rawValue, dataType);
+    if (coerced.error) return { ok: false, error: coerced.error };
+
+    // Set the variable value
+    model.variables[internalName] = coerced.value;
+
+    // Trigger re-render — OutSystems BaseViewModel has a refresh mechanism
+    // Try multiple approaches to ensure the UI updates
+    try {
+      if (typeof viewInstance.forceUpdate === "function") {
+        viewInstance.forceUpdate();
+      } else if (typeof viewInstance.setState === "function") {
+        viewInstance.setState({});
+      }
+    } catch (renderErr) {
+      // Silently continue — value is set even if re-render fails
+    }
+
+    // Read back the value to confirm
+    const newValue = _safeSerialize(model.variables[internalName]);
+    return { ok: true, newValue: newValue };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  React Fiber Traversal — find the live screen model                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Find the current screen's model object by traversing the React fiber tree.
+ */
+function _findCurrentScreenModel() {
+  const viewInstance = _findCurrentScreenViewInstance();
+  if (!viewInstance) return null;
+  return viewInstance.model || null;
+}
+
+/**
+ * Find the current screen's View component instance (React class component)
+ * by traversing the React fiber tree from the root DOM element.
+ */
+function _findCurrentScreenViewInstance() {
+  // OutSystems renders into a specific root element
+  const root = document.querySelector("[data-container]") ||
+    document.getElementById("os-root") ||
+    document.querySelector(".screen") ||
+    document.body;
+
+  // Try to find React fiber from any DOM element
+  const fiber = _getReactFiber(root);
+  if (!fiber) {
+    // Fallback: try to find any element with a fiber
+    return _findViewInstanceByDOMSearch();
+  }
+
+  // Walk up the fiber tree to find the BaseWebScreen instance
+  return _walkFiberForView(fiber);
+}
+
+/**
+ * Get the React fiber node from a DOM element.
+ */
+function _getReactFiber(element) {
+  if (!element) return null;
+  // React 16+ uses __reactFiber$ or __reactInternalInstance$
+  const keys = Object.keys(element);
+  for (const key of keys) {
+    if (key.startsWith("__reactFiber$") || key.startsWith("__reactInternalInstance$")) {
+      return element[key];
+    }
+  }
+  return null;
+}
+
+/**
+ * Walk the fiber tree (up and down) to find a View component instance
+ * that has a `controller` with a `model` containing `variables`.
+ */
+function _walkFiberForView(startFiber) {
+  // First walk up to the root
+  let root = startFiber;
+  while (root.return) {
+    root = root.return;
+  }
+
+  // Then DFS down through the tree
+  return _dfsForView(root);
+}
+
+/**
+ * DFS through the fiber tree looking for the screen View component.
+ */
+function _dfsForView(fiber) {
+  if (!fiber) return null;
+
+  // Check if this fiber's stateNode is the View we're looking for
+  const instance = fiber.stateNode;
+  if (instance && instance.controller && instance.model && instance.model.variables) {
+    // Found a component with controller.model.variables — this is our screen View
+    return instance;
+  }
+
+  // Check child
+  let result = _dfsForView(fiber.child);
+  if (result) return result;
+
+  // Check siblings
+  let sibling = fiber.sibling;
+  while (sibling) {
+    result = _dfsForView(sibling);
+    if (result) return result;
+    sibling = sibling.sibling;
+  }
+
+  return null;
+}
+
+/**
+ * Fallback: search the DOM for elements with React fiber properties,
+ * then walk each fiber tree to find the View instance.
+ */
+function _findViewInstanceByDOMSearch() {
+  // Try common OutSystems root selectors
+  const candidates = document.querySelectorAll("div[data-block], div[class*='screen'], #renderContainerId, body > div");
+
+  for (const el of candidates) {
+    const fiber = _getReactFiber(el);
+    if (fiber) {
+      const result = _walkFiberForView(fiber);
+      if (result) return result;
+    }
+  }
+
+  // Last resort: walk all direct children of body
+  for (const el of document.body.children) {
+    const fiber = _getReactFiber(el);
+    if (fiber) {
+      const result = _walkFiberForView(fiber);
+      if (result) return result;
+    }
+  }
+
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -370,9 +588,9 @@ function _coerceDateValue(raw, varType) {
   if (OS && OS.DataConversion && OS.DataConversion.ServerDataConverter) {
     try {
       const typeEnum =
-        varType === "Date"      ? OS.DataTypes.DataTypes.Date :
-        varType === "Time"      ? OS.DataTypes.DataTypes.Time :
-                                  OS.DataTypes.DataTypes.DateTime;
+        varType === "Date" ? OS.DataTypes.DataTypes.Date :
+          varType === "Time" ? OS.DataTypes.DataTypes.Time :
+            OS.DataTypes.DataTypes.DateTime;
 
       // Build a server-format string from the HTML input value
       let serverStr;
