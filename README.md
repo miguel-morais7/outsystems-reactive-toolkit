@@ -31,14 +31,22 @@ A Chrome side panel extension for inspecting and editing **OutSystems Reactive**
 
 ```
 chrome-extension/
-├── manifest.json      # MV3 extension manifest
-├── background.js      # Service worker — orchestrates messaging & script injection
-├── pageScript.js      # Injected into the page's MAIN world to access OS runtime
-├── sidepanel.html     # Side panel markup
-├── sidepanel.css      # Side panel styles
-├── sidepanel.js       # Side panel UI logic (rendering, events, editing)
+├── manifest.json          # MV3 extension manifest
+├── background.js          # Service worker — orchestrates messaging & script injection
+├── pageScript.js          # Injected into the page's MAIN world to access OS runtime
+├── sidepanel.html         # Side panel markup
+├── sidepanel.css          # Side panel styles
+├── sidepanel.js           # Side panel orchestrator — section coordination & scan logic
+├── sections/              # Modular section components
+│   ├── variables.js       # Client variables section (scan, display, edit)
+│   ├── producers.js       # Producer references section (health status)
+│   └── screens.js         # Screen navigation section
+├── utils/                 # Shared utilities
+│   ├── helpers.js         # Pure functions (esc, debounce, sendMessage)
+│   └── ui.js              # DOM utilities (show, hide, toast, flashRow)
 └── icons/
     ├── icon16.png
+    ├── icon32.png
     ├── icon48.png
     └── icon128.png
 ```
@@ -47,7 +55,41 @@ chrome-extension/
 
 1. **Service Worker** (`background.js`) listens for messages from the side panel and injects `pageScript.js` into the active tab's MAIN world using `chrome.scripting.executeScript`.
 2. **Page Script** (`pageScript.js`) leverages the OutSystems AMD `require()` loader and `performance.getEntriesByType("resource")` to discover `*.clientVariables.js` and `*.referencesHealth.js` modules at runtime. It exposes global functions (`_osClientVarsScan`, `_osClientVarsSet`, `_osClientVarsGet`) that the service worker invokes.
-3. **Side Panel** (`sidepanel.js`) provides the interactive UI — rendering variable tables grouped by module, producer reference lists, and screen navigation. It communicates with the service worker via `chrome.runtime.sendMessage`.
+3. **Side Panel** uses a modular, section-based architecture:
+   - **Orchestrator** (`sidepanel.js`) coordinates scans, distributes data to sections, and manages auto-rescan logic
+   - **Section Modules** (`sections/*.js`) each handle their own rendering, state, filtering, and events — making the codebase easy to extend
+   - **Utilities** (`utils/*.js`) provide shared functions for messaging, DOM manipulation, and UI feedback
+   - Sections communicate with the service worker via `chrome.runtime.sendMessage`
+
+## Architecture
+
+The side panel follows a **modular, section-based architecture** that makes it easy to add new features without touching existing code.
+
+### Section Modules
+Each section (`sections/*.js`) is a self-contained module that exports:
+- `init()` — Initialize DOM references and event listeners
+- `setData(data)` — Receive and store data from scans
+- `getState()` — Return current filter/search state
+- `render()` — Update the UI based on current state
+
+Sections manage their own:
+- State (data, collapsed state, filters)
+- DOM references and event listeners
+- Rendering and filtering logic
+- User interactions (editing, navigation)
+
+### Adding a New Section
+To add a new section:
+1. Create `sections/newsection.js` following the same export pattern
+2. Add corresponding HTML markup to `sidepanel.html`
+3. Register it in the `sections` array in `sidepanel.js`
+4. Update `pageScript.js` to scan the relevant data
+
+No changes to existing sections required!
+
+### Shared Utilities
+- **`utils/helpers.js`** — Pure functions (escaping, debouncing, messaging)
+- **`utils/ui.js`** — DOM manipulation (visibility, toasts, animations)
 
 ## Permissions
 
