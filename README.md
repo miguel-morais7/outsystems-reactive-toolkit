@@ -1,14 +1,38 @@
 # OutSystems Reactive Toolkit — Chrome Extension
 
-A Chrome side panel extension for inspecting and editing **OutSystems Reactive** application runtime data, including client variables, producer references, and screens.
+A Chrome side panel extension for inspecting and editing **OutSystems Reactive** application runtime data. It provides deep visibility into client variables, screen details, roles, and producer references.
 
 ## Features
 
-- **Client Variables** — Scan, view, search, filter, and inline-edit client variables across all loaded modules on the current page. Supports Text, Boolean, Integer, Decimal, Date/Time, and more.
-- **Producer References** — Discover and list producer references from all `referencesHealth.js` modules, with status indicators (OK / broken).
-- **Screen Navigation** — List all screens defined in the application's `moduleinfo` manifest and navigate between them directly from the panel.
-- **Auto-Rescan** — Automatically re-scans when the active tab navigates or refreshes.
-- **Search & Filter** — Per-section search bars and module dropdown filters for quick lookup.
+### 1. Client Variables
+- **Scan & Edit**: Discover and modify client variables across all loaded modules.
+- **Type Support**: Handles Text, Boolean, Integer, Decimal, Currency, Date, Time, and DateTime.
+- **Normalization**: Automatically maps OutSystems internal types to user-friendly formats.
+
+### 2. Screen Inspection & Live Editing (New)
+- **Navigation**: List all application screens grouped by Flow.
+- **Deep Inspection**: Expand any screen to view its:
+  - **Input Parameters**
+  - **Local Variables**
+  - **Aggregates**
+  - **Data Actions**
+  - **Server Actions**
+  - **Screen Actions**
+- **Live Editing**: For the **currently active screen**, you can view and edit Input Parameters and Local Variables in real-time.
+- **Visual Feedback**: The current screen is highlighted, and changes are instantly applied to the running application.
+
+### 3. Role Discovery (New)
+- **List Roles**: Discover and list all security roles defined in the application's modules.
+- **Searchable**: Quickly find roles by name using the built-in search bar.
+
+### 4. Producer References
+- **Health Check**: List producer references from all `referencesHealth.js` modules.
+- **Status Indicators**: Instantly see if a reference is "OK" or broken.
+
+### 5. Enhanced UI/UX
+- **Sticky Headers**: Search bars and section headers remain visible while scrolling.
+- **Collapsible Flows**: Easily manage large applications by collapsing module/flow groups.
+- **Auto-Rescan**: Extension automatically updates when you navigate or refresh the page.
 
 ## Installation
 
@@ -32,23 +56,20 @@ A Chrome side panel extension for inspecting and editing **OutSystems Reactive**
 ```
 chrome-extension/
 ├── manifest.json          # MV3 extension manifest
-├── background.js          # Service worker — orchestrates messaging & script injection
-├── pageScript.js          # Injected into the page's MAIN world to access OS runtime
-├── sidepanel.html         # Side panel markup
-├── sidepanel.css          # Side panel styles
-├── sidepanel.js           # Side panel orchestrator — section coordination & scan logic
-├── sections/              # Modular section components
-│   ├── variables.js       # Client variables section (scan, display, edit)
-│   ├── producers.js       # Producer references section (health status)
-│   └── screens.js         # Screen navigation section
-├── utils/                 # Shared utilities
-│   ├── helpers.js         # Pure functions (esc, debounce, sendMessage)
-│   └── ui.js              # DOM utilities (show, hide, toast, flashRow)
-└── icons/
-    ├── icon16.png
-    ├── icon32.png
-    ├── icon48.png
-    └── icon128.png
+├── background.js          # Service worker — handles fetching & script injection
+├── pageScript.js          # Injected logic — accesses React Fiber & OS Runtime
+├── sidepanel.html         # Main UI layout
+├── sidepanel.css          # Styles (sticky headers, dark mode friendly)
+├── sidepanel.js           # Orchestrator — manages sections & messaging
+├── sections/              # Modular feature components
+│   ├── variables.js       # Client Variables (Scan, Edit)
+│   ├── screens.js         # Screens (Nav, Expand, Live Edit)
+│   ├── roles.js           # Roles (Discovery)
+│   └── producers.js       # Producers (Health Status)
+├── utils/                 # Utilities
+│   ├── helpers.js         # Debounce, escape, etc.
+│   └── ui.js              # Toasts, visibility, animations
+└── icons/                 # Extension icons
 ```
 
 ## How It Works
