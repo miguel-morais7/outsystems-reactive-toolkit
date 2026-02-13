@@ -122,6 +122,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
+
+  if (message.action === "INIT_ACTION_PARAM") {
+    handleInitActionParam(message.methodName, message.attrName, message.maxListItems)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.action === "INTROSPECT_ACTION_PARAM") {
+    handleIntrospectActionParam(message.methodName, message.attrName, message.maxListItems)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.action === "SET_ACTION_PARAM_DEEP") {
+    handleSetActionParamDeep(message.methodName, message.attrName, message.path, message.value, message.dataType)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.action === "ACTION_PARAM_LIST_APPEND") {
+    handleActionParamListAppend(message.methodName, message.attrName, message.path, message.maxListItems)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.action === "ACTION_PARAM_LIST_DELETE") {
+    handleActionParamListDelete(message.methodName, message.attrName, message.path, message.index, message.maxListItems)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
 });
 
 /* ------------------------------------------------------------------ */
@@ -383,6 +418,111 @@ async function handleInvokeScreenAction(methodName, paramValues) {
     world: "MAIN",
     func: (m, p) => _osScreenActionInvoke(m, p),
     args: [methodName, paramValues || []],
+  });
+
+  const data = extractScriptResult(results);
+  if (data === undefined) {
+    return { ok: false, error: "Could not access page — is it a restricted URL?" };
+  }
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  INIT ACTION PARAM (create default complex value for action param)  */
+/* ------------------------------------------------------------------ */
+async function handleInitActionParam(methodName, attrName, maxListItems) {
+  const tab = await getActiveTab();
+  await ensurePageScriptInjected(tab.id);
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    func: (m, a, max) => _osActionParamInit(m, a, max),
+    args: [methodName, attrName, maxListItems || 50],
+  });
+
+  const data = extractScriptResult(results);
+  if (data === undefined) {
+    return { ok: false, error: "Could not access page — is it a restricted URL?" };
+  }
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  INTROSPECT ACTION PARAM (read complex value tree)                  */
+/* ------------------------------------------------------------------ */
+async function handleIntrospectActionParam(methodName, attrName, maxListItems) {
+  const tab = await getActiveTab();
+  await ensurePageScriptInjected(tab.id);
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    func: (m, a, max) => _osActionParamIntrospect(m, a, max),
+    args: [methodName, attrName, maxListItems || 50],
+  });
+
+  const data = extractScriptResult(results);
+  if (data === undefined) {
+    return { ok: false, error: "Could not access page — is it a restricted URL?" };
+  }
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  SET ACTION PARAM DEEP (write to nested path in temp param)         */
+/* ------------------------------------------------------------------ */
+async function handleSetActionParamDeep(methodName, attrName, path, value, dataType) {
+  const tab = await getActiveTab();
+  await ensurePageScriptInjected(tab.id);
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    func: (m, a, p, val, type) => _osActionParamDeepSet(m, a, p, val, type),
+    args: [methodName, attrName, path, value, dataType],
+  });
+
+  const data = extractScriptResult(results);
+  if (data === undefined) {
+    return { ok: false, error: "Could not access page — is it a restricted URL?" };
+  }
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  ACTION PARAM LIST APPEND (add record to list in temp param)        */
+/* ------------------------------------------------------------------ */
+async function handleActionParamListAppend(methodName, attrName, path, maxListItems) {
+  const tab = await getActiveTab();
+  await ensurePageScriptInjected(tab.id);
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    func: (m, a, p, max) => _osActionParamListAppend(m, a, p, max),
+    args: [methodName, attrName, path || [], maxListItems || 50],
+  });
+
+  const data = extractScriptResult(results);
+  if (data === undefined) {
+    return { ok: false, error: "Could not access page — is it a restricted URL?" };
+  }
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  ACTION PARAM LIST DELETE (remove record from list in temp param)   */
+/* ------------------------------------------------------------------ */
+async function handleActionParamListDelete(methodName, attrName, path, index, maxListItems) {
+  const tab = await getActiveTab();
+  await ensurePageScriptInjected(tab.id);
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    func: (m, a, p, idx, max) => _osActionParamListDelete(m, a, p, idx, max),
+    args: [methodName, attrName, path || [], index, maxListItems || 50],
   });
 
   const data = extractScriptResult(results);

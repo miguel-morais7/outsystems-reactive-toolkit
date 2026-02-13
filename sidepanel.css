@@ -1005,8 +1005,32 @@ body {
 .screen-action-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.screen-action-header .btn-trigger-action {
+  margin-left: auto;
+}
+
+.screen-action-chevron {
+  flex-shrink: 0;
+  transition: transform var(--transition);
+  color: var(--text-muted);
+  transform: rotate(-90deg);
+}
+
+.screen-action-item.expanded .screen-action-chevron {
+  transform: rotate(0deg);
+}
+
+.screen-action-body-wrap {
+  overflow: hidden;
+}
+
+.screen-action-body-wrap.collapsed {
+  display: none;
 }
 
 .btn-trigger-action {
@@ -1047,63 +1071,29 @@ body {
   flex-shrink: 0;
 }
 
-.screen-action-params {
+.screen-action-body {
   margin-top: 8px;
   padding-top: 6px;
   border-top: 1px dashed rgba(228, 62, 43, 0.2);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
 }
 
-.screen-action-param {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.action-param-label {
-  font-size: 12px;
-  font-weight: 500;
+.screen-action-sub-header {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--text-secondary);
-  white-space: nowrap;
-  min-width: 0;
-  flex-shrink: 1;
+  padding: 2px 4px 4px;
+}
+
+.screen-action-param-row {
+  /* Inherits screen-var-row grid layout */
 }
 
 .action-param-required {
   color: var(--os-red);
   margin-left: 2px;
-}
-
-.action-param-control {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  flex-shrink: 0;
-}
-
-.action-param-control .var-value {
-  font-size: 12px;
-  padding: 3px 6px;
-  min-width: 70px;
-  max-width: 120px;
-}
-
-.action-param-control .bool-toggle {
-  width: 32px;
-  height: 18px;
-}
-
-.action-param-control .bool-toggle .knob {
-  width: 14px;
-  height: 14px;
-}
-
-.action-param-control .bool-toggle.active .knob {
-  transform: translateX(14px);
+  font-weight: 400;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1127,18 +1117,22 @@ body {
 /*  VARIABLE INSPECT POPUP                                             */
 /* ------------------------------------------------------------------ */
 
-/* Inspect icon button in screen var rows */
-.btn-var-popup {
+/* Inspect icon button in screen var rows and action param rows */
+.btn-var-popup,
+.btn-action-param-popup {
   opacity: 0.4;
   transition: opacity var(--transition), color var(--transition);
 }
 
 .screen-detail-item:hover .btn-var-popup,
-.btn-var-popup:focus {
+.screen-detail-item:hover .btn-action-param-popup,
+.btn-var-popup:focus,
+.btn-action-param-popup:focus {
   opacity: 1;
 }
 
-.btn-var-popup:hover {
+.btn-var-popup:hover,
+.btn-action-param-popup:hover {
   color: var(--os-red);
   background: var(--bg-hover);
 }

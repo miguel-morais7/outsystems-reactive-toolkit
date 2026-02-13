@@ -541,6 +541,10 @@ var _DATA_TYPE_NAMES = {
   8: "Date",
   9: "Date Time",
   10: "Time",
+  11: "Record",
+  12: "RecordList",
+  13: "BinaryData",
+  14: "Object",
 };
 
 /**
@@ -1135,53 +1139,79 @@ function _osScreenActionsGet() {
       var displayName = baseName.charAt(0).toUpperCase() + baseName.slice(1);
 
       // Try to get detailed param type info from registerVariableGroupType
-      var params = [];
-      if (paramNames.length > 0) {
-        // Try to find the variable group type — the key pattern varies, so
-        // we search through the internal action source for the key
-        var internalFn = proto["_" + m];
-        var varGroupKey = null;
-        if (typeof internalFn === "function") {
-          var internalSrc = internalFn.toString();
-          var keyMatch = internalSrc.match(/getVariableGroupType\s*\(\s*"([^"]+)"\s*\)/);
-          if (keyMatch) varGroupKey = keyMatch[1];
-        }
+      var inputs = [];
+      var locals = [];
 
-        if (varGroupKey) {
-          try {
-            var VarType = ctrl.constructor.getVariableGroupType(varGroupKey);
-            if (VarType && typeof VarType.attributesToDeclare === "function") {
-              var attrs = VarType.attributesToDeclare();
-              for (var a = 0; a < attrs.length; a++) {
-                var attr = attrs[a];
-                params.push({
-                  name: attr.name,
-                  attrName: attr.attrName,
-                  dataType: _DATA_TYPE_NAMES[attr.dataType] || "Text",
-                  mandatory: !!attr.mandatory
-                });
+      // Get internal function reference (underscore-prefixed implementation)
+      var internalFn = proto["_" + m];
+      var varGroupKey = null;
+      if (typeof internalFn === "function") {
+        var internalSrc = internalFn.toString();
+        var keyMatch = internalSrc.match(/getVariableGroupType\s*\(\s*"([^"]+)"\s*\)/);
+        if (keyMatch) varGroupKey = keyMatch[1];
+      }
+
+      // Build a set of attrNames that correspond to input params by parsing
+      // the internal function body for assignments like: vars.value.ATTR = PARAM
+      var inputAttrNames = new Set();
+      if (typeof internalFn === "function") {
+        var internalSrc2 = internalFn.toString();
+        for (var pi = 0; pi < paramNames.length; pi++) {
+          var assignRe = new RegExp("vars\\.value\\.(\\w+)\\s*=\\s*" + paramNames[pi] + "(?:\\.|;|\\s|\\))");
+          var assignMatch = assignRe.exec(internalSrc2);
+          if (assignMatch) {
+            inputAttrNames.add(assignMatch[1]);
+          }
+        }
+      }
+      // Fallback: if no assignments found, use proxy param names directly
+      if (inputAttrNames.size === 0) {
+        for (var pi2 = 0; pi2 < paramNames.length; pi2++) {
+          inputAttrNames.add(paramNames[pi2]);
+        }
+      }
+
+      if (varGroupKey) {
+        try {
+          var VarType = ctrl.constructor.getVariableGroupType(varGroupKey);
+          if (VarType && typeof VarType.attributesToDeclare === "function") {
+            var attrs = VarType.attributesToDeclare();
+            for (var a = 0; a < attrs.length; a++) {
+              var attr = attrs[a];
+              var entry = {
+                name: attr.name,
+                attrName: attr.attrName,
+                dataType: _DATA_TYPE_NAMES[attr.dataType] || "Text",
+                mandatory: !!attr.mandatory
+              };
+              if (inputAttrNames.has(attr.attrName)) {
+                inputs.push(entry);
+              } else {
+                locals.push(entry);
               }
             }
-          } catch (_) { /* fall through to simple param names */ }
-        }
-
-        // Fallback: use param names without type info
-        if (params.length === 0) {
-          for (var p = 0; p < paramNames.length; p++) {
-            params.push({
-              name: paramNames[p],
-              attrName: paramNames[p],
-              dataType: "Text",
-              mandatory: false
-            });
           }
+        } catch (_) { /* fall through to simple param names */ }
+      }
+
+      // Fallback: use param names without type info (all go to inputs)
+      if (inputs.length === 0 && paramNames.length > 0) {
+        for (var p = 0; p < paramNames.length; p++) {
+          inputs.push({
+            name: paramNames[p],
+            attrName: paramNames[p],
+            dataType: "Text",
+            mandatory: false
+          });
         }
       }
 
       actions.push({
         name: displayName,
         methodName: m,
-        params: params
+        inputs: inputs,
+        locals: locals,
+        varGroupKey: varGroupKey
       });
     }
 
@@ -1221,6 +1251,15 @@ function _osScreenActionInvoke(methodName, paramValues) {
     var coercedArgs = [];
     for (var i = 0; i < (paramValues || []).length; i++) {
       var pv = paramValues[i];
+      // Check for complex type stored in temp map
+      if (pv.isComplex && pv.attrName) {
+        var complexKey = methodName + "." + pv.attrName;
+        var complexVal = window.__osActionParams[complexKey];
+        if (complexVal !== undefined && complexVal !== null) {
+          coercedArgs.push(complexVal);
+          continue;
+        }
+      }
       var coerced = _coerceValue(pv.value, pv.dataType);
       if (coerced.error) {
         return { ok: false, error: "Parameter " + (i + 1) + ": " + coerced.error };
@@ -1233,6 +1272,9 @@ function _osScreenActionInvoke(methodName, paramValues) {
 
     // Invoke the action
     var result = ctrl[methodName].apply(ctrl, coercedArgs);
+
+    // Clean up temp action params for this method
+    _cleanupActionParams(methodName);
 
     // Handle promise results (async actions)
     if (result && typeof result.then === "function") {
@@ -1247,6 +1289,405 @@ function _osScreenActionInvoke(methodName, paramValues) {
 
     _flushAndRerender(viewInstance.model, viewInstance);
     return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  ACTION PARAM TEMP STORAGE — manage complex values before invocation */
+/* ------------------------------------------------------------------ */
+
+/** Temporary storage for complex action parameter values. */
+window.__osActionParams = window.__osActionParams || {};
+
+/** Clean up all temp action params for a given method. */
+function _cleanupActionParams(methodName) {
+  var prefix = methodName + ".";
+  var keys = Object.keys(window.__osActionParams);
+  for (var i = 0; i < keys.length; i++) {
+    if (keys[i].indexOf(prefix) === 0) {
+      delete window.__osActionParams[keys[i]];
+    }
+  }
+}
+
+/**
+ * Navigate a stored action param value along a path.
+ * Like _navigateToTarget but starts from the stored value directly.
+ */
+function _navigateActionParam(stored, path) {
+  var target = stored;
+  for (var i = 0; i < path.length; i++) {
+    var step = path[i];
+    if (typeof step === "object" && "index" in step) {
+      if (!_isList(target)) {
+        return { error: "Expected list at step " + i + ", got " + typeof target };
+      }
+      target = _listGet(target, step.index);
+    } else {
+      if (target && typeof target.get === "function" && !_isList(target)) {
+        try {
+          var val = target.get(step);
+          if (val !== undefined) { target = val; continue; }
+        } catch (_) { /* fall through */ }
+      }
+      target = target[step];
+    }
+    if (target === undefined || target === null) {
+      return { error: "Path navigation failed at step " + i + " (" + JSON.stringify(step) + ")" };
+    }
+  }
+  return { target: target };
+}
+
+/**
+ * Initialize a default complex value for an action parameter.
+ * Creates the value from the variable group type, stores it in temp,
+ * and returns the introspected tree.
+ *
+ * @param {string} methodName - Action method name
+ * @param {string} attrName - Parameter attribute name
+ * @param {number} [maxListItems=50]
+ * @returns {Object} { ok, tree }
+ */
+function _osActionParamInit(methodName, attrName, maxListItems) {
+  try {
+    var viewInstance = _findCurrentScreenViewInstance();
+    if (!viewInstance) {
+      return { ok: false, error: "Could not find the active screen's view instance." };
+    }
+
+    var ctrl = viewInstance.controller;
+    if (!ctrl) {
+      return { ok: false, error: "Controller not found." };
+    }
+
+    // Find the var group key from the internal action method
+    var proto = Object.getPrototypeOf(ctrl);
+    var internalFn = proto["_" + methodName];
+    var varGroupKey = null;
+    if (typeof internalFn === "function") {
+      var src = internalFn.toString();
+      var keyMatch = src.match(/getVariableGroupType\s*\(\s*"([^"]+)"\s*\)/);
+      if (keyMatch) varGroupKey = keyMatch[1];
+    }
+
+    if (!varGroupKey) {
+      return { ok: false, error: "Cannot find variable group type for action." };
+    }
+
+    var VarType = ctrl.constructor.getVariableGroupType(varGroupKey);
+    if (!VarType || typeof VarType.attributesToDeclare !== "function") {
+      return { ok: false, error: "Variable group type has no attributesToDeclare." };
+    }
+
+    // Find the attribute to determine its default value
+    var attrs = VarType.attributesToDeclare();
+    var targetAttr = null;
+    for (var i = 0; i < attrs.length; i++) {
+      if (attrs[i].attrName === attrName) {
+        targetAttr = attrs[i];
+        break;
+      }
+    }
+
+    if (!targetAttr) {
+      return { ok: false, error: "Attribute '" + attrName + "' not found in variable group." };
+    }
+
+    // Create a default instance
+    var defaultValue = null;
+
+    // Strategy 1: Use defaultValue factory if available
+    if (typeof targetAttr.defaultValue === "function") {
+      try {
+        defaultValue = targetAttr.defaultValue();
+      } catch (_) { /* fall through */ }
+    }
+
+    // Strategy 2: Create from the attribute's type constructor
+    if (defaultValue === null && targetAttr.complexType) {
+      try {
+        if (typeof targetAttr.complexType === "function") {
+          defaultValue = new targetAttr.complexType();
+        }
+      } catch (_) { /* fall through */ }
+    }
+
+    // Strategy 3: For lists, try to create an empty list
+    if (defaultValue === null && _DATA_TYPE_NAMES[targetAttr.dataType] === "RecordList") {
+      // Try the OutSystems list constructor
+      try {
+        if (window.__osRuntime && window.__osRuntime.DataStructures) {
+          defaultValue = new window.__osRuntime.DataStructures.DataRecord.DataRecordList();
+        }
+      } catch (_) { /* fall through */ }
+    }
+
+    // Strategy 4: Instantiate the VarType itself and read the attr
+    if (defaultValue === null) {
+      try {
+        var tempInstance = new VarType();
+        if (tempInstance && typeof tempInstance.get === "function") {
+          defaultValue = tempInstance.get(attrName);
+        } else if (tempInstance && tempInstance[attrName] !== undefined) {
+          defaultValue = tempInstance[attrName];
+        }
+      } catch (_) { /* fall through */ }
+    }
+
+    if (defaultValue === null || defaultValue === undefined) {
+      return { ok: false, error: "Cannot create a default value for parameter '" + attrName + "'." };
+    }
+
+    // Store in temp map
+    var key = methodName + "." + attrName;
+    window.__osActionParams[key] = defaultValue;
+
+    // Introspect and return tree
+    var tree = _introspectValue(defaultValue, attrName, 0, maxListItems || 50);
+    return { ok: true, tree: tree };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Introspect a stored action parameter value.
+ *
+ * @param {string} methodName - Action method name
+ * @param {string} attrName - Parameter attribute name
+ * @param {number} [maxListItems=50]
+ * @returns {Object} { ok, tree }
+ */
+function _osActionParamIntrospect(methodName, attrName, maxListItems) {
+  try {
+    var key = methodName + "." + attrName;
+    var stored = window.__osActionParams[key];
+    if (stored === undefined || stored === null) {
+      return { ok: false, error: "Action param '" + key + "' not initialized. Call init first." };
+    }
+    var tree = _introspectValue(stored, attrName, 0, maxListItems || 50);
+    return { ok: true, tree: tree };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Deep-set a value on a stored action parameter.
+ *
+ * @param {string} methodName - Action method name
+ * @param {string} attrName - Parameter attribute name
+ * @param {Array} path - Path to the leaf
+ * @param {*} rawValue - New value
+ * @param {string} dataType - OS data type for coercion
+ * @returns {Object} { ok, newValue }
+ */
+function _osActionParamDeepSet(methodName, attrName, path, rawValue, dataType) {
+  try {
+    var key = methodName + "." + attrName;
+    var stored = window.__osActionParams[key];
+    if (stored === undefined || stored === null) {
+      return { ok: false, error: "Action param '" + key + "' not initialized." };
+    }
+
+    // Navigate to the parent of the leaf
+    var parentPath = path.slice(0, -1);
+    var nav = _navigateActionParam(stored, parentPath);
+    if (nav.error) return { ok: false, error: nav.error };
+
+    var target = nav.target;
+    var leafKey = path[path.length - 1];
+
+    if (typeof leafKey === "object" && "index" in leafKey) {
+      // Primitive list item
+      if (!_isList(target)) {
+        return { ok: false, error: "Expected list at leaf but got " + typeof target };
+      }
+      var coerced = _coerceValue(rawValue, dataType);
+      if (coerced.error) return { ok: false, error: coerced.error };
+      if (typeof target.set === "function") {
+        target.set(leafKey.index, coerced.value);
+      } else if (typeof target.data === "object" && typeof target.data.set === "function") {
+        target.data.set(leafKey.index, coerced.value);
+      } else {
+        return { ok: false, error: "No set method found on the list." };
+      }
+      var newValue = _safeSerialize(_listGet(target, leafKey.index));
+      return { ok: true, newValue: newValue };
+    }
+
+    var coerced = _coerceValue(rawValue, dataType);
+    if (coerced.error) return { ok: false, error: coerced.error };
+
+    if (target && typeof target.set === "function" && !_isList(target)) {
+      target.set(leafKey, coerced.value);
+    } else {
+      target[leafKey] = coerced.value;
+    }
+
+    var readBack;
+    if (target && typeof target.get === "function" && !_isList(target)) {
+      readBack = target.get(leafKey);
+    } else {
+      readBack = target[leafKey];
+    }
+    return { ok: true, newValue: _safeSerialize(readBack) };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Append a new record to a list inside a stored action parameter.
+ *
+ * @param {string} methodName - Action method name
+ * @param {string} attrName - Parameter attribute name
+ * @param {Array} path - Path to the list
+ * @param {number} [maxListItems=50]
+ * @returns {Object} { ok, tree }
+ */
+function _osActionParamListAppend(methodName, attrName, path, maxListItems) {
+  try {
+    var key = methodName + "." + attrName;
+    var stored = window.__osActionParams[key];
+    if (stored === undefined || stored === null) {
+      return { ok: false, error: "Action param '" + key + "' not initialized." };
+    }
+
+    var nav = _navigateActionParam(stored, path);
+    if (nav.error) return { ok: false, error: nav.error };
+
+    var list = nav.target;
+    if (!_isList(list)) {
+      return { ok: false, error: "Target is not a list." };
+    }
+
+    // Create new item (same strategies as _osScreenVarListAppend)
+    var newItem = null;
+    var listLen = _listCount(list);
+
+    if (typeof list.getEmptyListItem === "function") {
+      try {
+        var template = list.getEmptyListItem();
+        if (template !== null && template !== undefined) {
+          if (typeof template !== "object" && typeof template !== "function") {
+            newItem = template;
+          } else if (typeof template.clone === "function") {
+            newItem = template.clone();
+          } else if (template.constructor && template.constructor !== Object) {
+            newItem = new template.constructor();
+          } else {
+            newItem = template;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (newItem === null) {
+      try {
+        var template = list.emptyListItem;
+        if (template !== null && template !== undefined) {
+          if (typeof template !== "object" && typeof template !== "function") {
+            newItem = template;
+          } else if (typeof template.clone === "function") {
+            newItem = template.clone();
+          } else if (template.constructor && template.constructor !== Object) {
+            newItem = new template.constructor();
+          } else {
+            newItem = template;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (newItem === null && listLen > 0) {
+      try {
+        var sample = _listGet(list, 0);
+        if (sample !== null && typeof sample === "object" &&
+            sample.constructor && sample.constructor !== Object) {
+          newItem = new sample.constructor();
+        }
+      } catch (_) {}
+    }
+
+    if (newItem === null && listLen > 0) {
+      try {
+        var sample = _listGet(list, 0);
+        if (sample === null || sample === undefined || typeof sample !== "object") {
+          if (typeof sample === "boolean") newItem = false;
+          else if (typeof sample === "number") newItem = 0;
+          else newItem = "";
+        }
+      } catch (_) {}
+    }
+
+    if (newItem === null) {
+      return { ok: false, error: "Cannot create a new record — no item template found." };
+    }
+
+    var appended = false;
+    if (typeof list.push === "function") { list.push(newItem); appended = true; }
+    else if (typeof list.append === "function") { list.append(newItem); appended = true; }
+    else if (typeof list.add === "function") { list.add(newItem); appended = true; }
+    else if (typeof list.insert === "function") { list.insert(newItem, listLen); appended = true; }
+
+    if (!appended) {
+      return { ok: false, error: "No append method found on the list." };
+    }
+
+    var tree = _introspectValue(stored, attrName, 0, maxListItems || 50);
+    return { ok: true, tree: tree };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Remove a record from a list inside a stored action parameter.
+ *
+ * @param {string} methodName - Action method name
+ * @param {string} attrName - Parameter attribute name
+ * @param {Array} path - Path to the list
+ * @param {number} index - Index to remove
+ * @param {number} [maxListItems=50]
+ * @returns {Object} { ok, tree }
+ */
+function _osActionParamListDelete(methodName, attrName, path, index, maxListItems) {
+  try {
+    var key = methodName + "." + attrName;
+    var stored = window.__osActionParams[key];
+    if (stored === undefined || stored === null) {
+      return { ok: false, error: "Action param '" + key + "' not initialized." };
+    }
+
+    var nav = _navigateActionParam(stored, path);
+    if (nav.error) return { ok: false, error: nav.error };
+
+    var list = nav.target;
+    if (!_isList(list)) {
+      return { ok: false, error: "Target is not a list." };
+    }
+
+    var listLen = _listCount(list);
+    if (index < 0 || index >= listLen) {
+      return { ok: false, error: "Index " + index + " out of bounds (list has " + listLen + " items)." };
+    }
+
+    var removed = false;
+    if (typeof list.remove === "function") { list.remove(index); removed = true; }
+    else if (typeof list.removeAt === "function") { list.removeAt(index); removed = true; }
+    else if (typeof list.splice === "function") { list.splice(index, 1); removed = true; }
+    else if (typeof list.deleteItem === "function") { list.deleteItem(index); removed = true; }
+
+    if (!removed) {
+      return { ok: false, error: "No delete method found on the list." };
+    }
+
+    var tree = _introspectValue(stored, attrName, 0, maxListItems || 50);
+    return { ok: true, tree: tree };
   } catch (e) {
     return { ok: false, error: e.message };
   }
