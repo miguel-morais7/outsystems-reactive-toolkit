@@ -266,7 +266,48 @@ export async function fetchScreenDetails(baseUrl, moduleName, flow, screenName) 
     const name = match[1];
     // Convert camelCase: onSort -> OnSort
     const displayName = name.charAt(0).toUpperCase() + name.slice(1);
-    result.screenActions.push({ name: displayName });
+    // The public proxy method name (without underscore prefix)
+    const methodName = name + "$Action";
+    result.screenActions.push({ name: displayName, methodName, params: [] });
+  }
+
+  // ----------------------------------------------------------------
+  // Enrich Screen Actions with parameter metadata
+  // Pattern: Controller.registerVariableGroupType("...ActionName$vars", [{
+  //   name: "ParamDisplay", attrName: "paramInternal", mandatory: bool,
+  //   dataType: OS.DataTypes.DataTypes.TypeName, defaultValue: fn
+  // }]);
+  // ----------------------------------------------------------------
+  const TYPE_MAP_ACTIONS = { DateTime: "Date Time", LongInteger: "Long Integer", PhoneNumber: "Phone Number" };
+  const varGroupPattern = /Controller\.registerVariableGroupType\s*\(\s*"([^"]+\$vars)"\s*,\s*\[([\s\S]*?)\]\s*\)/g;
+  let varGroupMatch;
+  while ((varGroupMatch = varGroupPattern.exec(scriptText)) !== null) {
+    const varGroupKey = varGroupMatch[1];
+    const entriesStr = varGroupMatch[2];
+
+    // Extract action name from key: "Module.Flow.Screen.ActionName$vars" → "ActionName"
+    const keyParts = varGroupKey.replace("$vars", "").split(".");
+    const actionNameFromKey = keyParts[keyParts.length - 1];
+
+    // Find the matching screen action
+    const action = result.screenActions.find(
+      a => a.name.toLowerCase() === actionNameFromKey.toLowerCase()
+    );
+    if (!action) continue;
+
+    // Parse individual param entries
+    const paramPattern = /name:\s*"([^"]+)"[\s\S]*?attrName:\s*"([^"]+)"[\s\S]*?mandatory:\s*(true|false)[\s\S]*?dataType:\s*OS\.DataTypes\.DataTypes\.(\w+)/g;
+    let paramMatch;
+    while ((paramMatch = paramPattern.exec(entriesStr)) !== null) {
+      const rawType = paramMatch[4];
+      const dataType = TYPE_MAP_ACTIONS[rawType] || rawType;
+      action.params.push({
+        name: paramMatch[1],
+        attrName: paramMatch[2],
+        dataType,
+        mandatory: paramMatch[3] === "true",
+      });
+    }
   }
 
   return result;

@@ -108,6 +108,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
+
+  if (message.action === "GET_SCREEN_ACTIONS") {
+    handleGetScreenActions()
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.action === "INVOKE_SCREEN_ACTION") {
+    handleInvokeScreenAction(message.methodName, message.paramValues)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
 });
 
 /* ------------------------------------------------------------------ */
@@ -328,6 +342,47 @@ async function handleListDelete(internalName, path, index, maxListItems) {
     world: "MAIN",
     func: (name, p, idx, max) => _osScreenVarListDelete(name, p, idx, max),
     args: [internalName, path || [], index, maxListItems || 50],
+  });
+
+  const data = extractScriptResult(results);
+  if (data === undefined) {
+    return { ok: false, error: "Could not access page — is it a restricted URL?" };
+  }
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  GET SCREEN ACTIONS (discover actions from live controller)          */
+/* ------------------------------------------------------------------ */
+async function handleGetScreenActions() {
+  const tab = await getActiveTab();
+  await ensurePageScriptInjected(tab.id);
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    func: () => _osScreenActionsGet(),
+  });
+
+  const data = extractScriptResult(results);
+  if (data === undefined) {
+    return { ok: false, error: "Could not access page — is it a restricted URL?" };
+  }
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  INVOKE SCREEN ACTION (trigger an action with parameters)           */
+/* ------------------------------------------------------------------ */
+async function handleInvokeScreenAction(methodName, paramValues) {
+  const tab = await getActiveTab();
+  await ensurePageScriptInjected(tab.id);
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    func: (m, p) => _osScreenActionInvoke(m, p),
+    args: [methodName, paramValues || []],
   });
 
   const data = extractScriptResult(results);

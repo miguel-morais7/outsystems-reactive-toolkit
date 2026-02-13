@@ -76,6 +76,22 @@ export function init() {
       return;
     }
 
+    // Trigger action button
+    const triggerBtn = e.target.closest(".btn-trigger-action");
+    if (triggerBtn) {
+      e.stopPropagation();
+      invokeScreenAction(triggerBtn);
+      return;
+    }
+
+    // Boolean toggle for action params
+    const actionParamToggle = e.target.closest(".action-param-toggle");
+    if (actionParamToggle) {
+      e.stopPropagation();
+      actionParamToggle.classList.toggle("active");
+      return;
+    }
+
     // Screen row expand/collapse (click on the row itself, not navigate button)
     const screenRow = e.target.closest(".screen-row");
     if (screenRow && !e.target.closest(".btn-navigate")) {
@@ -313,9 +329,13 @@ function buildScreenDetails(details, isCurrent) {
     html += `<div class="screen-detail-section">`;
     html += `<div class="screen-detail-header">Screen Actions</div>`;
     for (const ca of details.screenActions) {
-      html += `<div class="screen-detail-item">
-        <span class="screen-detail-name">${esc(ca.name)}</span>
-      </div>`;
+      if (isCurrent && ca.methodName) {
+        html += buildScreenActionItem(ca);
+      } else {
+        html += `<div class="screen-detail-item">
+          <span class="screen-detail-name">${esc(ca.name)}</span>
+        </div>`;
+      }
     }
     html += `</div>`;
   }
@@ -409,6 +429,74 @@ function buildScreenVarItem(v, isCurrent) {
   </div>`;
 }
 
+/**
+ * Build an interactive action item for the current screen.
+ * Shows the action name, a trigger button, and expandable param inputs.
+ */
+function buildScreenActionItem(action) {
+  const hasParams = action.params && action.params.length > 0;
+  let html = `<div class="screen-action-item" data-method="${escAttr(action.methodName)}">`;
+  html += `<div class="screen-action-header">`;
+  html += `<span class="screen-detail-name">${esc(action.name)}</span>`;
+  html += `<button class="btn-trigger-action" data-method="${escAttr(action.methodName)}" title="Trigger ${esc(action.name)}">`;
+  html += `<svg class="action-play-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+  html += `<span class="action-btn-label">Run</span>`;
+  html += `</button>`;
+  html += `</div>`;
+
+  if (hasParams) {
+    html += `<div class="screen-action-params">`;
+    for (const p of action.params) {
+      html += buildActionParamInput(p, action.methodName);
+    }
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+/**
+ * Build an input control for a single action parameter.
+ */
+function buildActionParamInput(param, methodName) {
+  const inputId = `action-param-${methodName}-${param.attrName || param.name}`;
+  let inputHtml = "";
+
+  if (param.dataType === "Boolean") {
+    inputHtml = `<button class="bool-toggle action-param-toggle"
+                         data-param-name="${escAttr(param.name)}"
+                         data-type="Boolean">
+                   <span class="knob"></span>
+                 </button>`;
+  } else if (param.dataType === "Date" || param.dataType === "Time" || param.dataType === "Date Time") {
+    const inputType = param.dataType === "Date" ? "date" : param.dataType === "Time" ? "time" : "datetime-local";
+    inputHtml = `<input class="var-value action-param-input ${param.dataType === "Date" || param.dataType === "Time" || param.dataType === "Date Time" ? "var-value-date" : ""}"
+                        type="${inputType}" id="${escAttr(inputId)}"
+                        data-param-name="${escAttr(param.name)}"
+                        data-type="${escAttr(param.dataType)}"
+                        ${param.dataType === "Time" ? 'step="1"' : ""} />`;
+  } else {
+    const inputType = ["Integer", "Decimal", "Currency", "Long Integer"].includes(param.dataType) ? "number" : "text";
+    const step = param.dataType === "Decimal" || param.dataType === "Currency" ? 'step="any"' : "";
+    inputHtml = `<input class="var-value action-param-input" type="${inputType}" id="${escAttr(inputId)}"
+                        data-param-name="${escAttr(param.name)}"
+                        data-type="${escAttr(param.dataType)}"
+                        ${step}
+                        placeholder="${escAttr(param.name)}" />`;
+  }
+
+  return `<div class="screen-action-param">
+    <label class="action-param-label" for="${escAttr(inputId)}">
+      ${esc(param.name)}${param.mandatory ? '<span class="action-param-required">*</span>' : ""}
+    </label>
+    <div class="action-param-control">
+      ${inputHtml}
+      <span class="screen-detail-type">${esc(param.dataType)}</span>
+    </div>
+  </div>`;
+}
+
 /** Send a SET_SCREEN_VAR message and handle the response. */
 async function doSetScreenVar(internalName, rawValue, dataType, rowEl) {
   try {
@@ -463,6 +551,65 @@ function updateCachedVarValue(internalName, newValue) {
   }
 }
 
+/**
+ * Invoke a screen action via the trigger button.
+ * Collects param values from sibling inputs and sends INVOKE_SCREEN_ACTION.
+ */
+async function invokeScreenAction(triggerBtn) {
+  const methodName = triggerBtn.dataset.method;
+  const actionItem = triggerBtn.closest(".screen-action-item");
+  if (!actionItem) return;
+
+  // Collect parameter values in DOM order to preserve correct param positions
+  const paramValues = [];
+  const paramRows = actionItem.querySelectorAll(".screen-action-param");
+
+  paramRows.forEach(row => {
+    const input = row.querySelector(".action-param-input");
+    const toggle = row.querySelector(".action-param-toggle");
+    if (input) {
+      paramValues.push({
+        value: input.value,
+        dataType: input.dataset.type || "Text",
+      });
+    } else if (toggle) {
+      paramValues.push({
+        value: toggle.classList.contains("active"),
+        dataType: "Boolean",
+      });
+    }
+  });
+
+  // Visual feedback: show loading state
+  triggerBtn.disabled = true;
+  const label = triggerBtn.querySelector(".action-btn-label");
+  const origLabel = label ? label.textContent : "";
+  if (label) label.textContent = "...";
+  triggerBtn.classList.add("running");
+
+  try {
+    const result = await sendMessage({
+      action: "INVOKE_SCREEN_ACTION",
+      methodName,
+      paramValues,
+    });
+
+    if (!result || !result.ok) {
+      throw new Error(result?.error || "Action failed.");
+    }
+
+    flashRow(actionItem, "saved");
+    toast("Action triggered", "success");
+  } catch (err) {
+    flashRow(actionItem, "error");
+    toast(err.message, "error");
+  } finally {
+    triggerBtn.disabled = false;
+    if (label) label.textContent = origLabel;
+    triggerBtn.classList.remove("running");
+  }
+}
+
 async function toggleScreenExpand(screenUrl, flow, screenName) {
   // Toggle expansion
   expandedScreens[screenUrl] = !expandedScreens[screenUrl];
@@ -502,9 +649,10 @@ async function toggleScreenExpand(screenUrl, flow, screenName) {
         screenActions: response.screenActions || [],
       };
 
-      // If this is the current screen, fetch live runtime values
+      // If this is the current screen, fetch live runtime values and action metadata
       if (isCurrent) {
         await fetchLiveValues(details);
+        await enrichScreenActions(details);
       }
 
       // Store details directly on the screen object
@@ -545,6 +693,39 @@ async function toggleScreenExpand(screenUrl, flow, screenName) {
 
   loadingScreens[screenUrl] = false;
   render();
+}
+
+/**
+ * Enrich screen actions with runtime metadata from the live controller.
+ * This provides accurate parameter type info and ensures methodName is set.
+ */
+async function enrichScreenActions(details) {
+  if (!details.screenActions || details.screenActions.length === 0) return;
+
+  try {
+    const result = await sendMessage({ action: "GET_SCREEN_ACTIONS" });
+    if (!result || !result.ok || !result.actions) return;
+
+    // Build a map of runtime actions by normalized name
+    const runtimeMap = {};
+    for (const a of result.actions) {
+      runtimeMap[a.name.toLowerCase()] = a;
+    }
+
+    // Merge runtime data into statically-parsed actions
+    for (const action of details.screenActions) {
+      const runtime = runtimeMap[action.name.toLowerCase()];
+      if (runtime) {
+        action.methodName = runtime.methodName;
+        // Use runtime params if they have richer type info
+        if (runtime.params && runtime.params.length > 0) {
+          action.params = runtime.params;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[Screens] Failed to enrich screen actions:", e.message);
+  }
 }
 
 /**
