@@ -6,7 +6,7 @@
  * list append, and list delete operations.
  */
 
-import { esc, escAttr, sendMessage } from '../utils/helpers.js';
+import { esc, escAttr, sendMessage, formatDateForInput } from '../utils/helpers.js';
 import { flashRow, toast } from '../utils/ui.js';
 
 /* ================================================================== */
@@ -99,6 +99,16 @@ export function initPopupListeners(overlayEl) {
   /* Tree leaf editing: blur → save if changed */
   popupOverlay.addEventListener("focusout", (e) => {
     const input = e.target.closest(".var-tree-leaf-input");
+    if (!input) return;
+    if (input.value !== input.dataset.original) {
+      const leaf = input.closest(".var-tree-leaf");
+      commitTreeLeaf(leaf, input.value);
+    }
+  });
+
+  /* Date/time/datetime pickers fire "change" */
+  popupOverlay.addEventListener("change", (e) => {
+    const input = e.target.closest(".var-tree-leaf-date");
     if (!input) return;
     if (input.value !== input.dataset.original) {
       const leaf = input.closest(".var-tree-leaf");
@@ -263,6 +273,19 @@ function buildTreeLeaf(node, path, displayKey) {
     return `<div class="var-tree-leaf" data-path="${pathJson}" data-type="Boolean">
       <span class="var-tree-leaf-name">${esc(displayKey)}:</span>
       <button class="bool-toggle${active}"><span class="knob"></span></button>
+    </div>`;
+  }
+
+  // Date / Time / DateTime: show native date/time picker
+  if (node.type === "Date" || node.type === "Time" || node.type === "Date Time") {
+    const inputType = node.type === "Date" ? "date" : node.type === "Time" ? "time" : "datetime-local";
+    const displayValue = formatDateForInput(val, node.type);
+    return `<div class="var-tree-leaf" data-path="${pathJson}" data-type="${escAttr(node.type)}">
+      <span class="var-tree-leaf-name">${esc(displayKey)}:</span>
+      <input class="var-tree-leaf-input var-tree-leaf-date" type="${inputType}"
+             value="${escAttr(displayValue)}"
+             data-original="${escAttr(displayValue)}"
+             ${node.type === "Time" ? 'step="1"' : ""} />
     </div>`;
   }
 

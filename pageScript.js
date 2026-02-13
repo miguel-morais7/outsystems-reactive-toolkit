@@ -553,19 +553,38 @@ function _introspectValue(value, key, depth, maxListItems) {
     return { kind: "primitive", key, value: value, type: typeof value };
   }
 
-  // Date objects
+  // Date objects (native or OS DateTime wrapper with .getTime())
   if (value instanceof Date) {
-    return { kind: "primitive", key, value: value.toISOString(), type: "Date" };
+    return { kind: "primitive", key, value: value.toISOString(), type: "Date Time" };
+  }
+  // OutSystems DateTime wrapper: has .getTime() and date-part getters (year/month/day)
+  if (typeof value.getTime === "function") {
+    try {
+      const ts = value.getTime();
+      if (!isNaN(ts)) {
+        return { kind: "primitive", key, value: new Date(ts).toISOString(), type: "Date Time" };
+      }
+    } catch (_) { /* fall through */ }
+  }
+
+  // OutSystems LongInteger wrapper: has own .internalValue property
+  if (value.hasOwnProperty("internalValue") && typeof value.toString === "function") {
+    try {
+      return { kind: "primitive", key, value: String(value), type: "Long Integer" };
+    } catch (_) { /* fall through */ }
   }
 
   // OutSystems numeric wrapper objects (have .toString() and internal value)
+  // Constructor name may be minified, so also check via Number() coercion
   if (typeof value === "object" && value !== null &&
-      typeof value.toString === "function" && value.constructor &&
-      /^(Decimal|Currency|Long Integer)/.test(value.constructor.name || "")) {
-    try {
-      return { kind: "primitive", key, value: Number(value), type: value.constructor.name };
-    } catch (e) {
-      return { kind: "primitive", key, value: String(value), type: "number" };
+      typeof value.toString === "function" && typeof value.valueOf === "function") {
+    // Named constructor check (non-minified builds)
+    if (value.constructor && /^(Decimal|Currency|Long Integer)/.test(value.constructor.name || "")) {
+      try {
+        return { kind: "primitive", key, value: Number(value), type: value.constructor.name };
+      } catch (e) {
+        return { kind: "primitive", key, value: String(value), type: "number" };
+      }
     }
   }
 
@@ -747,7 +766,25 @@ function _osScreenVarDeepSet(internalName, path, rawValue, dataType) {
     // Set the leaf value through the reactive setter
     const leafKey = path[path.length - 1];
     if (typeof leafKey === "object" && "index" in leafKey) {
-      return { ok: false, error: "Cannot set a list index as leaf — set a property on the item instead." };
+      // Primitive list item: set by index using setItem() / set()
+      if (!_isList(target)) {
+        return { ok: false, error: "Expected list at leaf but got " + typeof target };
+      }
+      const coerced = _coerceValue(rawValue, dataType);
+      if (coerced.error) return { ok: false, error: coerced.error };
+
+      if (typeof target.setItem === "function") {
+        target.setItem(leafKey.index, coerced.value);
+      } else if (typeof target.data === "object" && typeof target.data.set === "function") {
+        target.data.set(leafKey.index, coerced.value);
+      } else {
+        return { ok: false, error: "No setItem/set method found on the list." };
+      }
+
+      _flushAndRerender(model, viewInstance);
+
+      const newValue = _safeSerialize(_listGet(target, leafKey.index));
+      return { ok: true, newValue };
     }
 
     const coerced = _coerceValue(rawValue, dataType);
