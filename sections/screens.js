@@ -138,6 +138,22 @@ export function init() {
       return;
     }
 
+    // Append new record to list
+    const appendBtn = e.target.closest(".btn-list-append");
+    if (appendBtn) {
+      e.stopPropagation();
+      handleListAppendClick(appendBtn);
+      return;
+    }
+
+    // Delete record from list
+    const deleteBtn = e.target.closest(".btn-list-delete");
+    if (deleteBtn) {
+      e.stopPropagation();
+      handleListDeleteClick(deleteBtn);
+      return;
+    }
+
     // Tree node expand/collapse
     const treeHeader = e.target.closest(".var-tree-header");
     if (treeHeader) {
@@ -793,6 +809,7 @@ function buildTreeNode(node, path, depth) {
   if (node.kind === "list") {
     const isCollapsed = depth > 1 ? " collapsed" : "";
     const childrenCollapsed = depth > 1 ? " collapsed" : "";
+    const listPathJson = escAttr(JSON.stringify(path));
     let html = `<div class="var-tree-node ${depth === 0 ? "var-tree-root" : ""}">`;
     html += `<div class="var-tree-header${isCollapsed}">`;
     html += `<svg class="var-tree-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
@@ -801,12 +818,23 @@ function buildTreeNode(node, path, depth) {
     html += `</div>`;
     html += `<div class="var-tree-children${childrenCollapsed}">`;
     for (const item of node.items) {
-      const itemPath = [...path, { index: parseInt(item.key, 10) }];
+      const itemIndex = parseInt(item.key, 10);
+      const itemPath = [...path, { index: itemIndex }];
+      // Wrap each list item with a delete button
+      html += `<div class="var-tree-list-item">`;
+      html += `<button class="btn-list-delete" data-path="${listPathJson}" data-index="${itemIndex}" title="Delete item ${itemIndex}">`;
+      html += `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+      html += `</button>`;
       html += buildTreeNode(item, itemPath, depth + 1);
+      html += `</div>`;
     }
     if (node.truncated) {
       html += `<div class="var-tree-leaf"><span class="var-tree-leaf-name" style="font-style:italic;color:var(--text-muted)">… more items</span></div>`;
     }
+    // Append button at the bottom of the list
+    html += `<button class="btn-list-append" data-path="${listPathJson}">`;
+    html += `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
+    html += ` Add record</button>`;
     html += `</div></div>`;
     return html;
   }
@@ -923,5 +951,99 @@ async function commitTreeLeaf(leafEl, newValue) {
     if (input) {
       input.value = input.dataset.original;
     }
+  }
+}
+
+/**
+ * Handle clicking the "Add record" button on a list node.
+ * Sends LIST_APPEND, then re-renders the popup tree.
+ */
+async function handleListAppendClick(btn) {
+  if (!popupState) return;
+
+  let path;
+  try {
+    path = JSON.parse(btn.dataset.path);
+  } catch (e) {
+    toast("Invalid path data", "error");
+    return;
+  }
+
+  btn.disabled = true;
+  const origText = btn.textContent;
+  btn.textContent = "Adding…";
+
+  try {
+    const result = await sendMessage({
+      action: "LIST_APPEND",
+      internalName: popupState.internalName,
+      path,
+    });
+
+    if (!result || !result.ok) {
+      throw new Error(result?.error || "Failed to append record.");
+    }
+
+    // Re-render the entire tree with the updated data
+    const body = popupOverlay.querySelector(".var-popup-body");
+    if (body) {
+      body.innerHTML = `<div class="var-tree">${buildTreeNode(result.tree, [], 0)}</div>`;
+    }
+
+    toast("Record added", "success");
+  } catch (err) {
+    toast(err.message, "error");
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+}
+
+/**
+ * Handle clicking the delete button on a list item.
+ * Sends LIST_DELETE, then re-renders the popup tree.
+ */
+async function handleListDeleteClick(btn) {
+  if (!popupState) return;
+
+  let path;
+  try {
+    path = JSON.parse(btn.dataset.path);
+  } catch (e) {
+    toast("Invalid path data", "error");
+    return;
+  }
+
+  const index = parseInt(btn.dataset.index, 10);
+  if (isNaN(index)) {
+    toast("Invalid item index", "error");
+    return;
+  }
+
+  // Visual feedback — fade the item
+  const listItem = btn.closest(".var-tree-list-item");
+  if (listItem) listItem.style.opacity = "0.5";
+
+  try {
+    const result = await sendMessage({
+      action: "LIST_DELETE",
+      internalName: popupState.internalName,
+      path,
+      index,
+    });
+
+    if (!result || !result.ok) {
+      throw new Error(result?.error || "Failed to delete record.");
+    }
+
+    // Re-render the entire tree with the updated data
+    const body = popupOverlay.querySelector(".var-popup-body");
+    if (body) {
+      body.innerHTML = `<div class="var-tree">${buildTreeNode(result.tree, [], 0)}</div>`;
+    }
+
+    toast("Record deleted", "success");
+  } catch (err) {
+    toast(err.message, "error");
+    if (listItem) listItem.style.opacity = "1";
   }
 }

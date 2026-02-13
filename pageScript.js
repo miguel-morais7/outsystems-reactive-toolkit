@@ -499,10 +499,35 @@ function _osScreenVarIntrospect(internalName, maxListItems) {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/*  List abstraction helpers — support both old and new OS runtime APIs  */
+/* ------------------------------------------------------------------ */
+
+/** Detect if a value is an OutSystems reactive list. */
+function _isList(value) {
+  if (!value || typeof value !== "object") return false;
+  // New API: .count() function + .get() function
+  if (typeof value.count === "function" && typeof value.get === "function") return true;
+  // Legacy API: numeric .length + .getItem() function
+  if (typeof value.length === "number" && typeof value.getItem === "function") return true;
+  return false;
+}
+
+/** Get the item count from a list (supports both APIs). */
+function _listCount(list) {
+  if (typeof list.count === "function") return list.count();
+  return list.length;
+}
+
+/** Get an item by index from a list (supports both APIs). */
+function _listGet(list, index) {
+  if (typeof list.get === "function") return list.get(index);
+  return list.getItem(index);
+}
+
 /**
  * Recursively introspect a reactive model value.
- * Detects lists (has .length + .getItem), records (objects with *Attr properties),
- * and primitives (everything else).
+ * Detects lists (.count + .get or .length + .getItem), records, and primitives.
  *
  * @param {*} value - The reactive model value to introspect
  * @param {string} key - The property key name
@@ -544,15 +569,15 @@ function _introspectValue(value, key, depth, maxListItems) {
     }
   }
 
-  // Detect list-like: has numeric .length and .getItem method (reactive list model)
+  // Detect list-like: new API (.count() + .get()) or legacy (.length + .getItem())
   try {
-    if (typeof value.length === "number" && typeof value.getItem === "function") {
-      const count = value.length;
+    if (_isList(value)) {
+      const count = _listCount(value);
       const items = [];
       const limit = Math.min(count, maxListItems);
       for (let i = 0; i < limit; i++) {
         try {
-          const item = value.getItem(i);
+          const item = _listGet(value, i);
           items.push(_introspectValue(item, String(i), depth + 1, maxListItems));
         } catch (e) {
           items.push({ kind: "primitive", key: String(i), value: "[error: " + e.message + "]", type: "error" });
@@ -630,6 +655,64 @@ function _introspectValue(value, key, depth, maxListItems) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Path Navigation Helper                                              */
+/* ------------------------------------------------------------------ */
+/**
+ * Navigate a reactive model variable along a path of property/index steps.
+ *
+ * @param {Object} variables - model.variables object
+ * @param {string} internalName - Root variable key
+ * @param {Array} path - Steps to walk, e.g. ["listOut", {index:0}, "nameAttr"]
+ * @returns {{ target: * } | { error: string }}
+ */
+function _navigateToTarget(variables, internalName, path) {
+  let target = variables[internalName];
+  if (target === undefined) {
+    return { error: "Variable '" + internalName + "' not found." };
+  }
+
+  for (let i = 0; i < path.length; i++) {
+    const step = path[i];
+    if (typeof step === "object" && "index" in step) {
+      if (!_isList(target)) {
+        return { error: "Expected list at step " + i + ", got " + typeof target };
+      }
+      target = _listGet(target, step.index);
+    } else {
+      // Property access: try record .get() first, then direct property
+      if (target && typeof target.get === "function" && !_isList(target)) {
+        try {
+          const val = target.get(step);
+          if (val !== undefined) { target = val; continue; }
+        } catch (_) { /* fall through to direct access */ }
+      }
+      target = target[step];
+    }
+    if (target === undefined || target === null) {
+      return { error: "Path navigation failed at step " + i + " (" + JSON.stringify(step) + ")" };
+    }
+  }
+
+  return { target };
+}
+
+/**
+ * Flush the reactive model and force a UI re-render.
+ */
+function _flushAndRerender(model, viewInstance) {
+  if (typeof model.flush === "function") {
+    model.flush();
+  }
+  try {
+    if (typeof viewInstance.forceUpdate === "function") {
+      viewInstance.forceUpdate();
+    }
+  } catch (_) {
+    // Silently continue
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  DEEP SET SCREEN VAR — write to a nested path in the reactive model */
 /* ------------------------------------------------------------------ */
 /**
@@ -654,28 +737,12 @@ function _osScreenVarDeepSet(internalName, path, rawValue, dataType) {
       return { ok: false, error: "Screen model not found." };
     }
 
-    let target = model.variables[internalName];
-    if (target === undefined) {
-      return { ok: false, error: "Variable '" + internalName + "' not found." };
-    }
-
     // Navigate to the parent of the leaf
-    for (let i = 0; i < path.length - 1; i++) {
-      const step = path[i];
-      if (typeof step === "object" && "index" in step) {
-        // List item access
-        if (typeof target.getItem !== "function") {
-          return { ok: false, error: "Expected list at step " + i + ", got " + typeof target };
-        }
-        target = target.getItem(step.index);
-      } else {
-        // Property access (reactive getter)
-        target = target[step];
-      }
-      if (target === undefined || target === null) {
-        return { ok: false, error: "Path navigation failed at step " + i + " (" + JSON.stringify(step) + ")" };
-      }
-    }
+    const parentPath = path.slice(0, -1);
+    const nav = _navigateToTarget(model.variables, internalName, parentPath);
+    if (nav.error) return { ok: false, error: nav.error };
+
+    const target = nav.target;
 
     // Set the leaf value through the reactive setter
     const leafKey = path[path.length - 1];
@@ -686,25 +753,216 @@ function _osScreenVarDeepSet(internalName, path, rawValue, dataType) {
     const coerced = _coerceValue(rawValue, dataType);
     if (coerced.error) return { ok: false, error: coerced.error };
 
-    target[leafKey] = coerced.value;
-
-    // Flush the reactive model to trigger write propagation and UI update
-    if (typeof model.flush === "function") {
-      model.flush();
+    // Set via record .set() method if available, otherwise direct property assignment
+    if (target && typeof target.set === "function" && !_isList(target)) {
+      target.set(leafKey, coerced.value);
+    } else {
+      target[leafKey] = coerced.value;
     }
 
-    // Also try forceUpdate as fallback
-    try {
-      if (typeof viewInstance.forceUpdate === "function") {
-        viewInstance.forceUpdate();
-      }
-    } catch (renderErr) {
-      // Silently continue
-    }
+    _flushAndRerender(model, viewInstance);
 
     // Read back the value to confirm
-    const newValue = _safeSerialize(target[leafKey]);
+    let readBack;
+    if (target && typeof target.get === "function" && !_isList(target)) {
+      readBack = target.get(leafKey);
+    } else {
+      readBack = target[leafKey];
+    }
+    const newValue = _safeSerialize(readBack);
     return { ok: true, newValue };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  LIST APPEND — add a new record to a reactive list                  */
+/* ------------------------------------------------------------------ */
+/**
+ * Navigate to a list inside a screen variable, create a new default
+ * record, and append it to the list.
+ *
+ * @param {string} internalName - Root variable internal name
+ * @param {Array} path - Path to the list (e.g. [] for root, ["ordersAttr"] for nested)
+ * @param {number} [maxListItems=50] - Max items for re-introspection
+ * @returns {Object} { ok, tree }
+ */
+function _osScreenVarListAppend(internalName, path, maxListItems) {
+  try {
+    const viewInstance = _findCurrentScreenViewInstance();
+    if (!viewInstance) {
+      return { ok: false, error: "Could not find the active screen's view instance." };
+    }
+
+    const model = viewInstance.model;
+    if (!model || !model.variables) {
+      return { ok: false, error: "Screen model not found." };
+    }
+
+    const nav = _navigateToTarget(model.variables, internalName, path);
+    if (nav.error) return { ok: false, error: nav.error };
+
+    const list = nav.target;
+    if (!_isList(list)) {
+      return { ok: false, error: "Target is not a list." };
+    }
+
+    // Create a new default record
+    let newItem = null;
+
+    // Strategy 1: Use list.getEmptyListItem() — the OS runtime's built-in template
+    if (typeof list.getEmptyListItem === "function") {
+      try {
+        const template = list.getEmptyListItem();
+        if (template) {
+          // Clone the template if it has a clone method, otherwise use the constructor
+          if (typeof template.clone === "function") {
+            newItem = template.clone();
+          } else if (template.constructor && template.constructor !== Object) {
+            newItem = new template.constructor();
+          } else {
+            newItem = template; // push may handle cloning internally
+          }
+        }
+      } catch (_) { /* fall through */ }
+    }
+
+    // Strategy 2: Use the emptyListItem property directly
+    if (!newItem && list.emptyListItem) {
+      try {
+        const template = list.emptyListItem;
+        if (typeof template.clone === "function") {
+          newItem = template.clone();
+        } else if (template.constructor && template.constructor !== Object) {
+          newItem = new template.constructor();
+        } else {
+          newItem = template;
+        }
+      } catch (_) { /* fall through */ }
+    }
+
+    // Strategy 3: Use the constructor of an existing item
+    const listLen = _listCount(list);
+    if (!newItem && listLen > 0) {
+      try {
+        const sample = _listGet(list, 0);
+        if (sample && sample.constructor && sample.constructor !== Object) {
+          newItem = new sample.constructor();
+        }
+      } catch (_) { /* fall through */ }
+    }
+
+    // Strategy 4: For primitive lists, push a default value
+    if (!newItem && listLen > 0) {
+      try {
+        const sample = _listGet(list, 0);
+        if (sample === null || sample === undefined || typeof sample !== "object") {
+          if (typeof sample === "boolean") newItem = false;
+          else if (typeof sample === "number") newItem = 0;
+          else if (typeof sample === "string") newItem = "";
+          else newItem = "";
+        }
+      } catch (_) { /* fall through */ }
+    }
+
+    if (newItem === null) {
+      return { ok: false, error: "Cannot create a new record — no item template or constructor found." };
+    }
+
+    // Append to list — probe available methods
+    let appended = false;
+    if (typeof list.push === "function") {
+      list.push(newItem);
+      appended = true;
+    } else if (typeof list.append === "function") {
+      list.append(newItem);
+      appended = true;
+    } else if (typeof list.add === "function") {
+      list.add(newItem);
+      appended = true;
+    } else if (typeof list.insert === "function") {
+      list.insert(newItem, listLen);
+      appended = true;
+    }
+
+    if (!appended) {
+      return { ok: false, error: "No append method found on the list (tried push, append, add, insert)." };
+    }
+
+    _flushAndRerender(model, viewInstance);
+
+    // Re-introspect the full variable tree
+    const tree = _introspectValue(model.variables[internalName], internalName, 0, maxListItems || 50);
+    return { ok: true, tree };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  LIST DELETE — remove a record from a reactive list by index         */
+/* ------------------------------------------------------------------ */
+/**
+ * Navigate to a list inside a screen variable and remove the item at
+ * the given index.
+ *
+ * @param {string} internalName - Root variable internal name
+ * @param {Array} path - Path to the list
+ * @param {number} index - Index of the item to remove
+ * @param {number} [maxListItems=50] - Max items for re-introspection
+ * @returns {Object} { ok, tree }
+ */
+function _osScreenVarListDelete(internalName, path, index, maxListItems) {
+  try {
+    const viewInstance = _findCurrentScreenViewInstance();
+    if (!viewInstance) {
+      return { ok: false, error: "Could not find the active screen's view instance." };
+    }
+
+    const model = viewInstance.model;
+    if (!model || !model.variables) {
+      return { ok: false, error: "Screen model not found." };
+    }
+
+    const nav = _navigateToTarget(model.variables, internalName, path);
+    if (nav.error) return { ok: false, error: nav.error };
+
+    const list = nav.target;
+    if (!_isList(list)) {
+      return { ok: false, error: "Target is not a list." };
+    }
+
+    const listLen = _listCount(list);
+    if (index < 0 || index >= listLen) {
+      return { ok: false, error: "Index " + index + " out of bounds (list has " + listLen + " items)." };
+    }
+
+    // Remove from list — probe available methods
+    let removed = false;
+    if (typeof list.remove === "function") {
+      list.remove(index);
+      removed = true;
+    } else if (typeof list.removeAt === "function") {
+      list.removeAt(index);
+      removed = true;
+    } else if (typeof list.splice === "function") {
+      list.splice(index, 1);
+      removed = true;
+    } else if (typeof list.deleteItem === "function") {
+      list.deleteItem(index);
+      removed = true;
+    }
+
+    if (!removed) {
+      return { ok: false, error: "No delete method found on the list (tried remove, removeAt, splice, deleteItem)." };
+    }
+
+    _flushAndRerender(model, viewInstance);
+
+    // Re-introspect the full variable tree
+    const tree = _introspectValue(model.variables[internalName], internalName, 0, maxListItems || 50);
+    return { ok: true, tree };
   } catch (e) {
     return { ok: false, error: e.message };
   }

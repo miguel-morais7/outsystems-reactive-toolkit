@@ -92,6 +92,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
+
+  if (message.action === "LIST_APPEND") {
+    handleListAppend(message.internalName, message.path, message.maxListItems)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.action === "LIST_DELETE") {
+    handleListDelete(message.internalName, message.path, message.index, message.maxListItems)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
 });
 
 /* ------------------------------------------------------------------ */
@@ -542,6 +556,48 @@ async function handleSetScreenVarDeep(internalName, path, value, dataType) {
     world: "MAIN",
     func: (name, p, val, type) => _osScreenVarDeepSet(name, p, val, type),
     args: [internalName, path, value, dataType],
+  });
+
+  const data = extractScriptResult(results);
+  if (data === undefined) {
+    return { ok: false, error: "Could not access page — is it a restricted URL?" };
+  }
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  LIST APPEND (add a new record to a reactive list)                   */
+/* ------------------------------------------------------------------ */
+async function handleListAppend(internalName, path, maxListItems) {
+  const tab = await getActiveTab();
+  await ensurePageScriptInjected(tab.id);
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    func: (name, p, max) => _osScreenVarListAppend(name, p, max),
+    args: [internalName, path || [], maxListItems || 50],
+  });
+
+  const data = extractScriptResult(results);
+  if (data === undefined) {
+    return { ok: false, error: "Could not access page — is it a restricted URL?" };
+  }
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  LIST DELETE (remove a record from a reactive list by index)         */
+/* ------------------------------------------------------------------ */
+async function handleListDelete(internalName, path, index, maxListItems) {
+  const tab = await getActiveTab();
+  await ensurePageScriptInjected(tab.id);
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    func: (name, p, idx, max) => _osScreenVarListDelete(name, p, idx, max),
+    args: [internalName, path || [], index, maxListItems || 50],
   });
 
   const data = extractScriptResult(results);

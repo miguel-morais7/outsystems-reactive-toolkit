@@ -1268,3 +1268,69 @@ body {
 .var-tree-leaf .bool-toggle.active .knob {
   transform: translateX(12px);
 }
+
+/* ------------------------------------------------------------------ */
+/*  LIST ITEM WRAPPER & MUTATION BUTTONS                                */
+/* ------------------------------------------------------------------ */
+
+.var-tree-list-item {
+  position: relative;
+}
+
+.btn-list-delete {
+  display: none;
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  z-index: 1;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: rgba(153, 27, 27, 0.1);
+  color: #991b1b;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: 0;
+  transition: background var(--transition), color var(--transition), transform var(--transition);
+}
+
+.var-tree-list-item:hover > .btn-list-delete {
+  display: inline-flex;
+}
+
+.btn-list-delete:hover {
+  background: #991b1b;
+  color: #fff;
+  transform: scale(1.1);
+}
+
+.btn-list-append {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  margin: 4px 0 2px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+  width: 100%;
+}
+
+.btn-list-append:hover {
+  color: var(--os-red);
+  border-color: var(--os-red);
+  background: rgba(228, 62, 43, 0.05);
+}
+
+.btn-list-append:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
