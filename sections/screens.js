@@ -29,6 +29,7 @@ const inputSearch = document.getElementById("input-search-screens");
 const screenList = document.getElementById("screen-list");
 const screenCount = document.getElementById("screen-count");
 const emptyState = document.getElementById("empty-state");
+const popupOverlay = document.getElementById("var-popup-overlay");
 
 /** The root section element (exported for the orchestrator). */
 export const sectionEl = document.getElementById("screen-section");
@@ -47,6 +48,14 @@ export function init() {
   inputSearch.addEventListener("input", debounce(render, 150));
 
   screenList.addEventListener("click", (e) => {
+    // Inspect popup icon for complex types
+    const popupBtn = e.target.closest(".btn-var-popup");
+    if (popupBtn) {
+      e.stopPropagation();
+      openVarPopup(popupBtn.dataset.internalName, popupBtn.dataset.name, popupBtn.dataset.type);
+      return;
+    }
+
     // Navigate button
     const navBtn = e.target.closest(".btn-navigate");
     if (navBtn) {
@@ -117,6 +126,72 @@ export function init() {
     if (!input) return;
     if (input.value !== input.dataset.original) {
       commitScreenVarInput(input);
+    }
+  });
+
+  /* ---- Popup event listeners ---- */
+
+  /* Close popup: click backdrop or close button */
+  popupOverlay.addEventListener("click", (e) => {
+    if (e.target === popupOverlay || e.target.closest(".var-popup-close")) {
+      closeVarPopup();
+      return;
+    }
+
+    // Tree node expand/collapse
+    const treeHeader = e.target.closest(".var-tree-header");
+    if (treeHeader) {
+      treeHeader.classList.toggle("collapsed");
+      const children = treeHeader.nextElementSibling;
+      if (children && children.classList.contains("var-tree-children")) {
+        children.classList.toggle("collapsed");
+      }
+      return;
+    }
+
+    // Boolean toggle in tree
+    const treeBool = e.target.closest(".bool-toggle");
+    if (treeBool) {
+      e.stopPropagation();
+      const isActive = treeBool.classList.contains("active");
+      const newVal = !isActive;
+      treeBool.classList.toggle("active", newVal);
+      const leaf = treeBool.closest(".var-tree-leaf");
+      commitTreeLeaf(leaf, String(newVal));
+      return;
+    }
+  });
+
+  /* Tree leaf editing: Enter → save, Escape → revert */
+  popupOverlay.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      // If an input is focused, revert it; otherwise close popup
+      const input = e.target.closest(".var-tree-leaf-input");
+      if (input && input.value !== input.dataset.original) {
+        input.value = input.dataset.original;
+        input.blur();
+      } else {
+        closeVarPopup();
+      }
+      return;
+    }
+
+    const input = e.target.closest(".var-tree-leaf-input");
+    if (!input) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const leaf = input.closest(".var-tree-leaf");
+      commitTreeLeaf(leaf, input.value);
+    }
+  });
+
+  /* Tree leaf editing: blur → save if changed */
+  popupOverlay.addEventListener("focusout", (e) => {
+    const input = e.target.closest(".var-tree-leaf-input");
+    if (!input) return;
+    if (input.value !== input.dataset.original) {
+      const leaf = input.closest(".var-tree-leaf");
+      commitTreeLeaf(leaf, input.value);
     }
   });
 }
@@ -359,9 +434,23 @@ function buildScreenVarItem(v, isCurrent) {
              ${isReadOnly ? "readonly" : ""}
              ${v.type === "Time" ? 'step="1"' : ""}
              title="${isReadOnly ? "Read-only" : "Edit to save"}" />`;
+  } else if (isReadOnly) {
+    // Complex types — show inspect icon instead of read-only input
+    valueControl = `
+      <button class="btn-icon btn-var-popup"
+              data-internal-name="${escAttr(v.internalName)}"
+              data-type="${esc(v.type)}"
+              data-name="${escAttr(v.name)}"
+              title="Inspect ${esc(v.name)}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M15 3h6v6"/>
+          <path d="M10 14L21 3"/>
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+        </svg>
+      </button>`;
   } else {
-    const displayValue = isReadOnly ? ("[" + v.type + "]") :
-      (v.value === null ? "" : String(v.value));
+    const displayValue = v.value === null ? "" : String(v.value);
     valueControl = `
       <input class="var-value screen-var-input"
              type="text"
@@ -369,14 +458,13 @@ function buildScreenVarItem(v, isCurrent) {
              data-internal-name="${escAttr(v.internalName)}"
              data-type="${esc(v.type)}"
              data-original="${escAttr(displayValue)}"
-             ${isReadOnly ? "readonly" : ""}
-             title="${isReadOnly ? "Read-only (" + v.type + ")" : "Press Enter to save"}" />`;
+             title="Press Enter to save" />`;
   }
 
   return `<div class="screen-detail-item screen-var-row" data-internal-name="${escAttr(v.internalName)}">
     <div class="screen-var-info">
       <span class="screen-detail-name">${esc(v.name)}</span>
-      <span class="screen-detail-type">${esc(v.type)}${isReadOnly ? " · read-only" : ""}</span>
+      <span class="screen-detail-type">${esc(v.type)}</span>
     </div>
     <div class="screen-var-value-wrap">
       ${valueControl}
@@ -608,5 +696,232 @@ async function fetchLiveValues(details) {
   } catch (e) {
     // Silently fail — the screen details will still show without live values
     console.warn("[Screens] Failed to fetch live values:", e.message);
+  }
+}
+
+/* ================================================================== */
+/*  Variable Inspect Popup                                             */
+/* ================================================================== */
+
+/** State for the currently open popup */
+let popupState = null; // { internalName, name, type }
+
+/**
+ * Open the inspect popup for a complex type variable.
+ * Sends INTROSPECT_SCREEN_VAR and renders the tree view.
+ */
+async function openVarPopup(internalName, name, type) {
+  popupState = { internalName, name, type };
+
+  // Show popup with loading state
+  popupOverlay.innerHTML = `
+    <div class="var-popup">
+      <div class="var-popup-header">
+        <div class="var-popup-header-info">
+          <div class="var-popup-title">${esc(name)}</div>
+          <div class="var-popup-subtitle">${esc(type)}</div>
+        </div>
+        <button class="var-popup-close" title="Close">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="var-popup-body">
+        <div class="var-popup-loading"><span class="mini-spinner"></span> Inspecting…</div>
+      </div>
+    </div>`;
+  popupOverlay.classList.remove("hidden");
+
+  // Fetch the introspected tree
+  try {
+    const result = await sendMessage({
+      action: "INTROSPECT_SCREEN_VAR",
+      internalName,
+    });
+
+    if (!result || !result.ok) {
+      renderPopupError(result?.error || "Failed to introspect variable.");
+      return;
+    }
+
+    // Render the tree view
+    const body = popupOverlay.querySelector(".var-popup-body");
+    if (body) {
+      body.innerHTML = `<div class="var-tree">${buildTreeNode(result.tree, [], 0)}</div>`;
+    }
+  } catch (e) {
+    renderPopupError(e.message);
+  }
+}
+
+/** Close the popup and clear state. */
+function closeVarPopup() {
+  popupOverlay.classList.add("hidden");
+  popupOverlay.innerHTML = "";
+  popupState = null;
+}
+
+/** Render an error message in the popup body. */
+function renderPopupError(msg) {
+  const body = popupOverlay.querySelector(".var-popup-body");
+  if (body) {
+    body.innerHTML = `<div class="var-popup-error">${esc(msg)}</div>`;
+  }
+}
+
+/**
+ * Recursively build HTML for a tree node.
+ *
+ * @param {Object} node - Tree node from _osScreenVarIntrospect
+ * @param {Array} path - Path of steps from root to this node
+ * @param {number} depth - Current depth for auto-collapse
+ * @returns {string} HTML string
+ */
+function buildTreeNode(node, path, depth) {
+  if (!node) return "";
+
+  // Clean up the display name: strip trailing "Attr", "Var", "Out" suffixes
+  const displayKey = cleanAttrName(node.key);
+
+  if (node.kind === "primitive") {
+    return buildTreeLeaf(node, path, displayKey);
+  }
+
+  if (node.kind === "list") {
+    const isCollapsed = depth > 1 ? " collapsed" : "";
+    const childrenCollapsed = depth > 1 ? " collapsed" : "";
+    let html = `<div class="var-tree-node ${depth === 0 ? "var-tree-root" : ""}">`;
+    html += `<div class="var-tree-header${isCollapsed}">`;
+    html += `<svg class="var-tree-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+    html += `<span class="var-tree-key">${esc(displayKey)}</span>`;
+    html += `<span class="var-tree-badge">${node.count} item${node.count !== 1 ? "s" : ""}</span>`;
+    html += `</div>`;
+    html += `<div class="var-tree-children${childrenCollapsed}">`;
+    for (const item of node.items) {
+      const itemPath = [...path, { index: parseInt(item.key, 10) }];
+      html += buildTreeNode(item, itemPath, depth + 1);
+    }
+    if (node.truncated) {
+      html += `<div class="var-tree-leaf"><span class="var-tree-leaf-name" style="font-style:italic;color:var(--text-muted)">… more items</span></div>`;
+    }
+    html += `</div></div>`;
+    return html;
+  }
+
+  if (node.kind === "record") {
+    const isCollapsed = depth > 2 ? " collapsed" : "";
+    const childrenCollapsed = depth > 2 ? " collapsed" : "";
+    let html = `<div class="var-tree-node ${depth === 0 ? "var-tree-root" : ""}">`;
+    html += `<div class="var-tree-header${isCollapsed}">`;
+    html += `<svg class="var-tree-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+    html += `<span class="var-tree-key">${esc(displayKey)}</span>`;
+    html += `<span class="var-tree-badge">${node.fields.length} field${node.fields.length !== 1 ? "s" : ""}</span>`;
+    html += `</div>`;
+    html += `<div class="var-tree-children${childrenCollapsed}">`;
+    for (const field of node.fields) {
+      const fieldPath = [...path, field.key];
+      html += buildTreeNode(field, fieldPath, depth + 1);
+    }
+    html += `</div></div>`;
+    return html;
+  }
+
+  // Fallback
+  return `<div class="var-tree-leaf"><span class="var-tree-leaf-name">${esc(displayKey)}</span><span class="var-tree-badge">${esc(String(node.value || ""))}</span></div>`;
+}
+
+/**
+ * Build an inline-editable leaf node for a primitive value.
+ */
+function buildTreeLeaf(node, path, displayKey) {
+  const val = node.value === null || node.value === undefined ? "" : String(node.value);
+  const pathJson = escAttr(JSON.stringify(path));
+
+  // Boolean: show toggle
+  if (node.type === "boolean" || val === "true" || val === "false") {
+    const active = val === "true" ? " active" : "";
+    return `<div class="var-tree-leaf" data-path="${pathJson}" data-type="Boolean">
+      <span class="var-tree-leaf-name">${esc(displayKey)}:</span>
+      <button class="bool-toggle${active}"><span class="knob"></span></button>
+    </div>`;
+  }
+
+  // Default: text input
+  return `<div class="var-tree-leaf" data-path="${pathJson}" data-type="${escAttr(node.type || "Text")}">
+    <span class="var-tree-leaf-name">${esc(displayKey)}:</span>
+    <input class="var-tree-leaf-input" type="text"
+           value="${escAttr(val)}"
+           data-original="${escAttr(val)}" />
+    ${node.type ? `<span class="var-tree-leaf-type">${esc(node.type)}</span>` : ""}
+  </div>`;
+}
+
+/**
+ * Clean up OutSystems internal attribute names for display.
+ * Strips common suffixes like "Attr", "Var", "Out" and converts to readable form.
+ */
+function cleanAttrName(name) {
+  if (!name) return "";
+  // Strip "Attr" suffix
+  let clean = name.replace(/Attr$/, "");
+  // Strip "Var" suffix
+  clean = clean.replace(/Var$/, "");
+  // Strip "Out" suffix for aggregate outputs
+  clean = clean.replace(/Out$/, "");
+  // Convert camelCase to Title Case with spaces
+  clean = clean.replace(/([a-z])([A-Z])/g, "$1 $2");
+  // Capitalize first letter
+  return clean.charAt(0).toUpperCase() + clean.slice(1);
+}
+
+/**
+ * Commit a tree leaf value change via SET_SCREEN_VAR_DEEP.
+ */
+async function commitTreeLeaf(leafEl, newValue) {
+  if (!popupState) return;
+
+  const pathJson = leafEl.dataset.path;
+  const dataType = leafEl.dataset.type || "Text";
+  let path;
+  try {
+    path = JSON.parse(pathJson);
+  } catch (e) {
+    toast("Invalid path data", "error");
+    return;
+  }
+
+  try {
+    const result = await sendMessage({
+      action: "SET_SCREEN_VAR_DEEP",
+      internalName: popupState.internalName,
+      path,
+      value: newValue,
+      dataType,
+    });
+
+    if (!result || !result.ok) {
+      throw new Error(result?.error || "Failed to set value.");
+    }
+
+    // Update the input's original value for future change detection
+    const input = leafEl.querySelector(".var-tree-leaf-input");
+    if (input) {
+      input.dataset.original = input.value;
+    }
+
+    flashRow(leafEl, "saved");
+    toast("Value updated", "success");
+  } catch (err) {
+    flashRow(leafEl, "error");
+    toast(err.message, "error");
+
+    // Revert the input
+    const input = leafEl.querySelector(".var-tree-leaf-input");
+    if (input) {
+      input.value = input.dataset.original;
+    }
   }
 }

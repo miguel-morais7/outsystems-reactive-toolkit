@@ -78,6 +78,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
+
+  if (message.action === "INTROSPECT_SCREEN_VAR") {
+    handleIntrospectScreenVar(message.internalName, message.maxListItems)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.action === "SET_SCREEN_VAR_DEEP") {
+    handleSetScreenVarDeep(message.internalName, message.path, message.value, message.dataType)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
 });
 
 /* ------------------------------------------------------------------ */
@@ -486,6 +500,48 @@ async function handleSetScreenVar(internalName, value, dataType) {
     world: "MAIN",
     func: (name, val, type) => _osScreenVarsSet(name, val, type),
     args: [internalName, value, dataType],
+  });
+
+  const data = extractScriptResult(results);
+  if (data === undefined) {
+    return { ok: false, error: "Could not access page — is it a restricted URL?" };
+  }
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  INTROSPECT SCREEN VAR (deep-read complex variable structure)       */
+/* ------------------------------------------------------------------ */
+async function handleIntrospectScreenVar(internalName, maxListItems) {
+  const tab = await getActiveTab();
+  await ensurePageScriptInjected(tab.id);
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    func: (name, max) => _osScreenVarIntrospect(name, max),
+    args: [internalName, maxListItems || 50],
+  });
+
+  const data = extractScriptResult(results);
+  if (data === undefined) {
+    return { ok: false, error: "Could not access page — is it a restricted URL?" };
+  }
+  return data;
+}
+
+/* ------------------------------------------------------------------ */
+/*  SET SCREEN VAR DEEP (write to nested path in reactive model)       */
+/* ------------------------------------------------------------------ */
+async function handleSetScreenVarDeep(internalName, path, value, dataType) {
+  const tab = await getActiveTab();
+  await ensurePageScriptInjected(tab.id);
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    func: (name, p, val, type) => _osScreenVarDeepSet(name, p, val, type),
+    args: [internalName, path, value, dataType],
   });
 
   const data = extractScriptResult(results);

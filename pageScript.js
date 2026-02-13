@@ -470,6 +470,247 @@ function _osScreenVarsSet(internalName, rawValue, dataType) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  INTROSPECT SCREEN VAR — deep-read complex variable structure       */
+/* ------------------------------------------------------------------ */
+/**
+ * Introspects a screen variable through the reactive model layer,
+ * recursively walking records and lists to build a serializable tree.
+ *
+ * @param {string} internalName - The internal variable name
+ * @param {number} [maxListItems=50] - Max items to read from lists
+ * @returns {Object} { ok, tree }
+ */
+function _osScreenVarIntrospect(internalName, maxListItems) {
+  try {
+    const model = _findCurrentScreenModel();
+    if (!model) {
+      return { ok: false, error: "Could not find the active screen's model." };
+    }
+
+    const raw = model.variables[internalName];
+    if (raw === undefined) {
+      return { ok: false, error: "Variable '" + internalName + "' not found on model." };
+    }
+
+    const tree = _introspectValue(raw, internalName, 0, maxListItems || 50);
+    return { ok: true, tree };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Recursively introspect a reactive model value.
+ * Detects lists (has .length + .getItem), records (objects with *Attr properties),
+ * and primitives (everything else).
+ *
+ * @param {*} value - The reactive model value to introspect
+ * @param {string} key - The property key name
+ * @param {number} depth - Current recursion depth
+ * @param {number} maxListItems - Max list items to enumerate
+ * @returns {Object} Tree node: { kind, key, ... }
+ */
+function _introspectValue(value, key, depth, maxListItems) {
+  const MAX_DEPTH = 10;
+
+  // Null / undefined
+  if (value === null || value === undefined) {
+    return { kind: "primitive", key, value: value, type: "null" };
+  }
+
+  // Depth guard
+  if (depth >= MAX_DEPTH) {
+    return { kind: "primitive", key, value: "[max depth]", type: "truncated" };
+  }
+
+  // Primitive JS types
+  if (typeof value !== "object" && typeof value !== "function") {
+    return { kind: "primitive", key, value: value, type: typeof value };
+  }
+
+  // Date objects
+  if (value instanceof Date) {
+    return { kind: "primitive", key, value: value.toISOString(), type: "Date" };
+  }
+
+  // OutSystems numeric wrapper objects (have .toString() and internal value)
+  if (typeof value === "object" && value !== null &&
+      typeof value.toString === "function" && value.constructor &&
+      /^(Decimal|Currency|Long Integer)/.test(value.constructor.name || "")) {
+    try {
+      return { kind: "primitive", key, value: Number(value), type: value.constructor.name };
+    } catch (e) {
+      return { kind: "primitive", key, value: String(value), type: "number" };
+    }
+  }
+
+  // Detect list-like: has numeric .length and .getItem method (reactive list model)
+  try {
+    if (typeof value.length === "number" && typeof value.getItem === "function") {
+      const count = value.length;
+      const items = [];
+      const limit = Math.min(count, maxListItems);
+      for (let i = 0; i < limit; i++) {
+        try {
+          const item = value.getItem(i);
+          items.push(_introspectValue(item, String(i), depth + 1, maxListItems));
+        } catch (e) {
+          items.push({ kind: "primitive", key: String(i), value: "[error: " + e.message + "]", type: "error" });
+        }
+      }
+      return { kind: "list", key, count, items, truncated: count > limit };
+    }
+  } catch (e) {
+    // Not a list — continue
+  }
+
+  // Detect record-like: object with enumerable properties
+  try {
+    const proto = Object.getPrototypeOf(value);
+    if (!proto) {
+      // Plain object or null prototype — serialize as-is
+      return { kind: "primitive", key, value: _safeSerialize(value), type: "Object" };
+    }
+
+    // Collect properties from the prototype chain (reactive models define getters on prototypes)
+    const fields = [];
+    const seen = new Set();
+    const SKIP = new Set(["constructor", "toString", "valueOf", "toJSON", "hasOwnProperty",
+      "isPrototypeOf", "propertyIsEnumerable", "__defineGetter__", "__defineSetter__",
+      "__lookupGetter__", "__lookupSetter__", "__proto__"]);
+
+    // Walk prototype chain to find getter properties (reactive model pattern)
+    let obj = proto;
+    while (obj && obj !== Object.prototype) {
+      const descriptors = Object.getOwnPropertyDescriptors(obj);
+      for (const [propName, desc] of Object.entries(descriptors)) {
+        if (seen.has(propName)) continue;
+        if (SKIP.has(propName)) continue;
+        if (propName.startsWith("_")) continue;
+        // Only include properties with getters (reactive model pattern) or data properties
+        if (desc.get || (!desc.set && desc.value !== undefined && typeof desc.value !== "function")) {
+          seen.add(propName);
+          try {
+            const propVal = value[propName];
+            fields.push(_introspectValue(propVal, propName, depth + 1, maxListItems));
+          } catch (e) {
+            fields.push({ kind: "primitive", key: propName, value: "[error: " + e.message + "]", type: "error" });
+          }
+        }
+      }
+      obj = Object.getPrototypeOf(obj);
+    }
+
+    // Also check own enumerable properties (for plain data objects)
+    if (fields.length === 0) {
+      const ownKeys = Object.keys(value);
+      for (const propName of ownKeys) {
+        if (seen.has(propName)) continue;
+        if (SKIP.has(propName)) continue;
+        if (propName.startsWith("_")) continue;
+        seen.add(propName);
+        try {
+          const propVal = value[propName];
+          fields.push(_introspectValue(propVal, propName, depth + 1, maxListItems));
+        } catch (e) {
+          fields.push({ kind: "primitive", key: propName, value: "[error: " + e.message + "]", type: "error" });
+        }
+      }
+    }
+
+    if (fields.length > 0) {
+      return { kind: "record", key, fields };
+    }
+
+    // Fallback: try to serialize
+    return { kind: "primitive", key, value: _safeSerialize(value), type: "Object" };
+  } catch (e) {
+    return { kind: "primitive", key, value: "[error: " + e.message + "]", type: "error" };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  DEEP SET SCREEN VAR — write to a nested path in the reactive model */
+/* ------------------------------------------------------------------ */
+/**
+ * Navigates a screen variable's reactive model along a path and sets
+ * the leaf value via the reactive setter, then flushes to update UI.
+ *
+ * @param {string} internalName - Root variable internal name
+ * @param {Array} path - Array of steps, e.g. ["listOut", {index:0}, "productAttr", "nameAttr"]
+ * @param {*} rawValue - The new value
+ * @param {string} dataType - OS data type for coercion
+ * @returns {Object} { ok, newValue }
+ */
+function _osScreenVarDeepSet(internalName, path, rawValue, dataType) {
+  try {
+    const viewInstance = _findCurrentScreenViewInstance();
+    if (!viewInstance) {
+      return { ok: false, error: "Could not find the active screen's view instance." };
+    }
+
+    const model = viewInstance.model;
+    if (!model || !model.variables) {
+      return { ok: false, error: "Screen model not found." };
+    }
+
+    let target = model.variables[internalName];
+    if (target === undefined) {
+      return { ok: false, error: "Variable '" + internalName + "' not found." };
+    }
+
+    // Navigate to the parent of the leaf
+    for (let i = 0; i < path.length - 1; i++) {
+      const step = path[i];
+      if (typeof step === "object" && "index" in step) {
+        // List item access
+        if (typeof target.getItem !== "function") {
+          return { ok: false, error: "Expected list at step " + i + ", got " + typeof target };
+        }
+        target = target.getItem(step.index);
+      } else {
+        // Property access (reactive getter)
+        target = target[step];
+      }
+      if (target === undefined || target === null) {
+        return { ok: false, error: "Path navigation failed at step " + i + " (" + JSON.stringify(step) + ")" };
+      }
+    }
+
+    // Set the leaf value through the reactive setter
+    const leafKey = path[path.length - 1];
+    if (typeof leafKey === "object" && "index" in leafKey) {
+      return { ok: false, error: "Cannot set a list index as leaf — set a property on the item instead." };
+    }
+
+    const coerced = _coerceValue(rawValue, dataType);
+    if (coerced.error) return { ok: false, error: coerced.error };
+
+    target[leafKey] = coerced.value;
+
+    // Flush the reactive model to trigger write propagation and UI update
+    if (typeof model.flush === "function") {
+      model.flush();
+    }
+
+    // Also try forceUpdate as fallback
+    try {
+      if (typeof viewInstance.forceUpdate === "function") {
+        viewInstance.forceUpdate();
+      }
+    } catch (renderErr) {
+      // Silently continue
+    }
+
+    // Read back the value to confirm
+    const newValue = _safeSerialize(target[leafKey]);
+    return { ok: true, newValue };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  React Fiber Traversal — find the live screen model                 */
 /* ------------------------------------------------------------------ */
 
