@@ -55,26 +55,65 @@ export async function fetchScreens(pageUrl) {
     screenUrlSet.add(rest);
   }
 
-  // Enrich with flow info from data.modules.screens
+  // Enrich with flow info, MVC module names, home screen, and static entities
   const screenMap = {};
+  let homeScreenName = null;
+  const staticEntities = [];
   const modules = data?.data?.modules || {};
+
   for (const moduleData of Object.values(modules)) {
+    // Screen metadata (name + MVC module references)
     if (moduleData.screens) {
       for (const screen of moduleData.screens) {
-        screenMap[screen.screenUrl] = screen.screenName;
+        screenMap[screen.screenUrl] = {
+          screenName: screen.screenName,
+          controllerModuleName: screen.controllerModuleName || null,
+        };
+      }
+    }
+
+    // Home screen (from the module matching the current URL)
+    if (!homeScreenName && moduleData.moduleName &&
+        moduleData.moduleName.toLowerCase() === moduleName.toLowerCase()) {
+      homeScreenName = moduleData.homeScreenName || null;
+    }
+
+    // Static entities
+    const entities = moduleData.staticEntities || {};
+    const modName = moduleData.moduleName || "Unknown";
+    for (const [entityGuid, records] of Object.entries(entities)) {
+      const recordList = [];
+      for (const [recordGuid, recordName] of Object.entries(records)) {
+        recordList.push({ guid: recordGuid, name: recordName });
+      }
+      if (recordList.length > 0) {
+        staticEntities.push({
+          module: modName,
+          entityGuid,
+          records: recordList.sort((a, b) => a.name.localeCompare(b.name)),
+        });
       }
     }
   }
 
   const screens = [...screenUrlSet].sort().map((screenUrl) => {
-    const fullName = screenMap[screenUrl] || screenUrl;
+    const info = screenMap[screenUrl];
+    const fullName = info ? info.screenName : screenUrl;
     const nameParts = fullName.split(".");
     return {
       screenUrl,
       name: nameParts.length > 1 ? nameParts.slice(1).join(".") : fullName,
       flow: nameParts.length > 1 ? nameParts[0] : "",
+      fullName,
+      controllerModuleName: info?.controllerModuleName || null,
     };
   });
+
+  // Version info from manifest
+  const versionInfo = {
+    versionToken: data?.manifest?.versionToken || null,
+    versionSequence: data?.manifest?.versionSequence ?? null,
+  };
 
   return {
     ok: true,
@@ -82,6 +121,9 @@ export async function fetchScreens(pageUrl) {
     moduleName,
     baseUrl: `${url.origin}/${moduleName}`,
     currentScreen,
+    homeScreenName,
+    versionInfo,
+    staticEntities,
   };
 }
 
@@ -149,9 +191,15 @@ export async function fetchRoles(pageUrl) {
 /* ------------------------------------------------------------------ */
 /*  FETCH SCREEN DETAILS (via mvc.js)                                  */
 /* ------------------------------------------------------------------ */
-export async function fetchScreenDetails(baseUrl, moduleName, flow, screenName) {
-  // Construct the MVC file URL: {baseUrl}/scripts/{Module}.{Flow}.{Screen}.mvc.js
-  const mvcUrl = `${baseUrl}/scripts/${moduleName}.${flow}.${screenName}.mvc.js?${Date.now()}`;
+export async function fetchScreenDetails(baseUrl, moduleName, flow, screenName, controllerModuleName) {
+  // Construct the MVC file URL from the exact module name if available, otherwise fall back to convention
+  let mvcUrl;
+  if (controllerModuleName) {
+    const mvcFileName = controllerModuleName.replace(/\$controller$/, '') + '.js';
+    mvcUrl = `${baseUrl}/scripts/${mvcFileName}?${Date.now()}`;
+  } else {
+    mvcUrl = `${baseUrl}/scripts/${moduleName}.${flow}.${screenName}.mvc.js?${Date.now()}`;
+  }
 
   let response;
   try {
