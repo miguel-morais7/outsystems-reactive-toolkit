@@ -106,7 +106,12 @@ export function render() {
     filtered = filtered.filter(e =>
       e.module.toLowerCase().includes(query) ||
       e.entityGuid.toLowerCase().includes(query) ||
-      e.records.some(r => r.name.toLowerCase().includes(query) || r.guid.toLowerCase().includes(query))
+      (e.entityName && e.entityName.toLowerCase().includes(query)) ||
+      e.records.some(r =>
+        r.name.toLowerCase().includes(query) ||
+        r.guid.toLowerCase().includes(query) ||
+        (r.recordName && r.recordName.toLowerCase().includes(query))
+      )
     );
   }
 
@@ -162,7 +167,7 @@ const COPY_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" st
 
 function buildEntityGroup(entity, index) {
   const isCollapsed = !!collapsedEntities[entity.entityGuid];
-  const displayName = `Entity ${index}`;
+  const displayName = entity.entityName || `Entity ${index}`;
 
   let html = `<div class="static-entity-group">`;
 
@@ -170,6 +175,10 @@ function buildEntityGroup(entity, index) {
   html += `<div class="entity-header ${isCollapsed ? 'collapsed' : ''}" data-entity-guid="${escAttr(entity.entityGuid)}">`;
   html += `<svg class="chevron entity-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
   html += `<span class="entity-name">${esc(displayName)}</span>`;
+  const attrSummary = entity.attributes && entity.attributes.length > 0
+    ? entity.attributes.map(a => a.name).join(", ")
+    : "";
+  html += `<span class="entity-attrs-hint"${attrSummary ? ` title="${escAttr(attrSummary)}"` : ''}>${esc(attrSummary)}</span>`;
   html += `<span class="count-badge">${entity.records.length}</span>`;
   html += `<button class="btn-icon btn-copy-guid" data-guid="${escAttr(entity.entityGuid)}" title="Copy entity GUID">${COPY_SVG}</button>`;
   html += `</div>`;
@@ -185,10 +194,13 @@ function buildEntityGroup(entity, index) {
 }
 
 function buildRecordRow(record) {
+  const label = record.recordName || record.name;
+  const showId = record.recordName && record.name !== record.recordName;
   return `
     <div class="var-row static-entity-record-row" data-record-guid="${escAttr(record.guid)}">
       <div class="var-info">
-        <span class="var-name">${esc(record.name)}</span>
+        <span class="var-name">${esc(label)}</span>
+        ${showId ? `<span class="record-id">${esc(record.name)}</span>` : ''}
       </div>
       <div class="var-value-wrap">
         <button class="btn-icon btn-copy-guid" data-guid="${escAttr(record.guid)}" title="Copy record GUID">${COPY_SVG}</button>

@@ -7,6 +7,77 @@
  */
 
 /* ------------------------------------------------------------------ */
+/*  PARSE STATIC ENTITY METADATA (from model.js)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Parse a model.js file to extract static entity metadata:
+ *   - Entity GUID → entity name (from staticEntities.<name> = {})
+ *   - Record GUID → record name (from Object.defineProperty calls)
+ *   - Attribute schemas (from Rec.attributesToDeclare)
+ *
+ * @param {string} text - Content of a *.model.js file
+ * @returns {{ entities: Object, schemas: Object }}
+ */
+function parseModelJsStaticEntities(text) {
+  const entities = {};
+  const schemas = {};
+
+  // 1. Entity name → GUID mappings
+  // Pattern:   .staticEntities.<name> = {};
+  //            ...staticEntities["<guid>"][record]
+  const entityPattern = /\.staticEntities\.(\w+)\s*=\s*\{\s*\};[\s\S]*?\.staticEntities\["([a-f0-9-]+)"\]\s*\[record\]/g;
+  let m;
+  while ((m = entityPattern.exec(text)) !== null) {
+    const varName = m[1];
+    const guid = m[2];
+    const entityName = varName.charAt(0).toUpperCase() + varName.slice(1);
+    entities[guid] = { entityName, records: {} };
+  }
+
+  // 2. Record name → GUID mappings
+  // Pattern: Object.defineProperty(...staticEntities.<name>, "<record>", { ...Record("<guid>") })
+  const recordPattern = /Object\.defineProperty\([^,]+\.staticEntities\.(\w+)\s*,\s*"(\w+)"\s*,[\s\S]*?Record\("([a-f0-9-]+)"\)/g;
+  while ((m = recordPattern.exec(text)) !== null) {
+    const varName = m[1];
+    const recordName = m[2];
+    const recordGuid = m[3];
+    for (const data of Object.values(entities)) {
+      if (data.entityName.toLowerCase() === varName.toLowerCase()) {
+        data.records[recordGuid] = recordName.charAt(0).toUpperCase() + recordName.slice(1);
+        break;
+      }
+    }
+  }
+
+  // 3. Rec attribute schemas
+  // Pattern: <Name>Rec.attributesToDeclare = function () { return [ this.attr(...) ].concat(
+  const recPattern = /(\w+)Rec\.attributesToDeclare\s*=\s*function\s*\(\)\s*\{\s*return\s*\[([\s\S]*?)\]\.concat/g;
+  while ((m = recPattern.exec(text)) !== null) {
+    const recBaseName = m[1];
+    const attrsBody = m[2];
+    const attrs = [];
+    const attrPattern = /this\.attr\s*\(\s*"([^"]+)"\s*,\s*"[^"]+"\s*,\s*"[^"]*"\s*,[^,]*,[^,]*,\s*OS\.DataTypes\.DataTypes\.(\w+)/g;
+    let am;
+    while ((am = attrPattern.exec(attrsBody)) !== null) {
+      attrs.push({ name: am[1], type: am[2] });
+    }
+    if (attrs.length > 0) {
+      schemas[recBaseName] = attrs;
+    }
+  }
+
+  // Connect schemas to entities by naming convention (EntityName → EntityNameRec)
+  for (const data of Object.values(entities)) {
+    if (schemas[data.entityName]) {
+      data.attributes = schemas[data.entityName];
+    }
+  }
+
+  return { entities, schemas };
+}
+
+/* ------------------------------------------------------------------ */
 /*  FETCH SCREENS (via moduleinfo)                                     */
 /* ------------------------------------------------------------------ */
 export async function fetchScreens(pageUrl) {
@@ -115,11 +186,68 @@ export async function fetchScreens(pageUrl) {
     versionSequence: data?.manifest?.versionSequence ?? null,
   };
 
+  const baseUrl = `${url.origin}/${moduleName}`;
+
+  // Enrich static entities with names and attribute schemas from model.js files
+  if (staticEntities.length > 0) {
+    const moduleNamesWithEntities = [...new Set(
+      Object.values(modules)
+        .filter(m => m.staticEntities && Object.keys(m.staticEntities).length > 0 && m.moduleName)
+        .map(m => m.moduleName)
+    )];
+
+    // Fetch and parse model.js for each module (in parallel)
+    const enrichmentMap = {};
+    const allSchemas = {};
+    const fetches = moduleNamesWithEntities.map(async (modName) => {
+      try {
+        const modelUrl = `${baseUrl}/scripts/${modName}.model.js?${Date.now()}`;
+        const resp = await fetch(modelUrl, { credentials: "include" });
+        if (!resp.ok) return;
+        const text = await resp.text();
+        const { entities, schemas } = parseModelJsStaticEntities(text);
+        for (const [guid, data] of Object.entries(entities)) {
+          if (!enrichmentMap[guid]) {
+            enrichmentMap[guid] = { ...data };
+          } else {
+            Object.assign(enrichmentMap[guid].records, data.records);
+            if (data.attributes && !enrichmentMap[guid].attributes) {
+              enrichmentMap[guid].attributes = data.attributes;
+            }
+          }
+        }
+        Object.assign(allSchemas, schemas);
+      } catch (_) { /* skip failed fetches */ }
+    });
+    await Promise.all(fetches);
+
+    // Second pass: connect orphan schemas to entities by naming convention
+    for (const data of Object.values(enrichmentMap)) {
+      if (!data.attributes && allSchemas[data.entityName]) {
+        data.attributes = allSchemas[data.entityName];
+      }
+    }
+
+    // Apply enrichment to staticEntities
+    for (const entity of staticEntities) {
+      const enrichment = enrichmentMap[entity.entityGuid];
+      if (enrichment) {
+        entity.entityName = enrichment.entityName;
+        entity.attributes = enrichment.attributes || [];
+        for (const record of entity.records) {
+          if (enrichment.records[record.guid]) {
+            record.recordName = enrichment.records[record.guid];
+          }
+        }
+      }
+    }
+  }
+
   return {
     ok: true,
     screens,
     moduleName,
-    baseUrl: `${url.origin}/${moduleName}`,
+    baseUrl,
     currentScreen,
     homeScreenName,
     versionInfo,
