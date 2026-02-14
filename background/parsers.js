@@ -190,29 +190,38 @@ export async function fetchScreens(pageUrl) {
 
   // Enrich static entities with names and attribute schemas from model.js files
   if (staticEntities.length > 0) {
-    const moduleNamesWithEntities = [...new Set(
-      Object.values(modules)
-        .filter(m => m.staticEntities && Object.keys(m.staticEntities).length > 0 && m.moduleName)
-        .map(m => m.moduleName)
-    )];
+    // Discover ALL model.js filenames from the manifest urlVersions.
+    // Entity name→GUID mappings live in consumer modules' model.js files,
+    // not necessarily in the defining module, so we must scan all of them.
+    const urlVersions = data?.manifest?.urlVersions || {};
+    const modelJsNames = new Set();
+    const modelJsPattern = /\/scripts\/(.+)\.model\.js$/;
+    for (const urlPath of Object.keys(urlVersions)) {
+      const match = urlPath.match(modelJsPattern);
+      if (match) modelJsNames.add(match[1]);
+    }
+    // Also include module names from moduleinfo as a fallback
+    for (const m of Object.values(modules)) {
+      if (m.moduleName) modelJsNames.add(m.moduleName);
+    }
 
     // Fetch and parse model.js for each module (in parallel)
     const enrichmentMap = {};
     const allSchemas = {};
-    const fetches = moduleNamesWithEntities.map(async (modName) => {
+    const fetches = [...modelJsNames].map(async (modName) => {
       try {
         const modelUrl = `${baseUrl}/scripts/${modName}.model.js?${Date.now()}`;
         const resp = await fetch(modelUrl, { credentials: "include" });
         if (!resp.ok) return;
         const text = await resp.text();
         const { entities, schemas } = parseModelJsStaticEntities(text);
-        for (const [guid, data] of Object.entries(entities)) {
+        for (const [guid, eData] of Object.entries(entities)) {
           if (!enrichmentMap[guid]) {
-            enrichmentMap[guid] = { ...data };
+            enrichmentMap[guid] = { ...eData };
           } else {
-            Object.assign(enrichmentMap[guid].records, data.records);
-            if (data.attributes && !enrichmentMap[guid].attributes) {
-              enrichmentMap[guid].attributes = data.attributes;
+            Object.assign(enrichmentMap[guid].records, eData.records);
+            if (eData.attributes && !enrichmentMap[guid].attributes) {
+              enrichmentMap[guid].attributes = eData.attributes;
             }
           }
         }
