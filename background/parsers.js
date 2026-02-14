@@ -78,6 +78,39 @@ function parseModelJsStaticEntities(text) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  PARSE SCREEN ROLES (from mvc.js checkPermissions)                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Parse the checkPermissions function from a screen's mvc.js to extract
+ * the roles required to access the screen.
+ *
+ * Patterns found in the wild:
+ *   - Empty body (public):       checkPermissions = function () {};
+ *   - Registered users only:     checkPermissions = function () { OS.RolesInfo.checkRegistered(); };
+ *   - Specific roles:            checkPermissions = function () { OS.RolesInfo.checkRoles([...Controller.default.roles.Name, ...]); };
+ *
+ * @param {string} text - Content of a *.mvc.js file
+ * @returns {string[]} Array of role names, or special markers ["Public"] / ["Registered"]
+ */
+function parseMvcRoles(text) {
+  const cpMatch = text.match(/checkPermissions\s*=\s*function\s*\(\)\s*\{([\s\S]*?)\};/);
+  if (!cpMatch) return null;
+
+  const body = cpMatch[1].trim();
+  if (!body) return ["Public"];
+  if (body.includes("checkRegistered")) return ["Registered"];
+
+  const roles = [];
+  const rolePattern = /\.roles\.(\w+)/g;
+  let m;
+  while ((m = rolePattern.exec(body)) !== null) {
+    roles.push(m[1]);
+  }
+  return roles.length > 0 ? roles : null;
+}
+
+/* ------------------------------------------------------------------ */
 /*  FETCH SCREENS (via moduleinfo)                                     */
 /* ------------------------------------------------------------------ */
 export async function fetchScreens(pageUrl) {
@@ -188,12 +221,39 @@ export async function fetchScreens(pageUrl) {
 
   const baseUrl = `${url.origin}/${moduleName}`;
 
+  // Enrich screens with role information from their mvc.js checkPermissions
+  const urlVersions = data?.manifest?.urlVersions || {};
+  {
+    const mvcEntries = [];
+    for (const [urlPath, version] of Object.entries(urlVersions)) {
+      if (!urlPath.endsWith(".mvc.js")) continue;
+      // Match screen mvc.js: /scripts/Module.Flow.ScreenName.mvc.js
+      // Screen entries have exactly Module.Flow.Screen (3+ dot-separated parts before .mvc.js)
+      const fileMatch = urlPath.match(/\/scripts\/(.+)\.mvc\.js$/);
+      if (!fileMatch) continue;
+      const mvcModuleName = fileMatch[1];
+      // Find which screen this mvc.js belongs to by matching controllerModuleName
+      const controllerName = mvcModuleName + ".mvc$controller";
+      const screen = screens.find(s => s.controllerModuleName === controllerName);
+      if (screen) {
+        mvcEntries.push({ screen, url: `${url.origin}${urlPath}${version}` });
+      }
+    }
+    await Promise.all(mvcEntries.map(async ({ screen, url }) => {
+      try {
+        const resp = await fetch(url, { credentials: "include" });
+        if (!resp.ok) return;
+        const text = await resp.text();
+        screen.roles = parseMvcRoles(text);
+      } catch (_) { /* skip failed fetches */ }
+    }));
+  }
+
   // Enrich static entities with names and attribute schemas from model.js files
   if (staticEntities.length > 0) {
     // Discover ALL model.js filenames from the manifest urlVersions.
     // Entity name→GUID mappings live in consumer modules' model.js files,
     // not necessarily in the defining module, so we must scan all of them.
-    const urlVersions = data?.manifest?.urlVersions || {};
     const modelJsNames = new Set();
     const modelJsPattern = /\/scripts\/(.+)\.model\.js$/;
     for (const urlPath of Object.keys(urlVersions)) {

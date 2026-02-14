@@ -19,7 +19,8 @@ export function render() {
       (s) =>
         s.name.toLowerCase().includes(query) ||
         s.screenUrl.toLowerCase().includes(query) ||
-        s.flow.toLowerCase().includes(query)
+        s.flow.toLowerCase().includes(query) ||
+        (s.roles && s.roles.some(r => r.toLowerCase().includes(query)))
     );
   }
 
@@ -69,6 +70,17 @@ export function render() {
   hide(emptyState);
 }
 
+function buildRoleBadges(roles) {
+  if (!roles || roles.length === 0) return '';
+  if (roles.length === 1 && roles[0] === "Public") {
+    return '<span class="screen-role-badge screen-role-public">PUBLIC</span>';
+  }
+  if (roles.length === 1 && roles[0] === "Registered") {
+    return '<span class="screen-role-badge screen-role-registered">REGISTERED</span>';
+  }
+  return roles.map(r => `<span class="screen-role-badge">${esc(r)}</span>`).join('');
+}
+
 function buildScreenRow(s) {
   const isCurrent = s.screenUrl === state.currentScreen;
   const isHome = s.fullName === state.homeScreenName;
@@ -84,6 +96,8 @@ function buildScreenRow(s) {
         <span class="var-name">${esc(s.name)}</span>
         ${isCurrent ? '<span class="var-type screen-current-badge">CURRENT</span>' : ''}
         ${isHome ? '<span class="var-type screen-home-badge">HOME</span>' : ''}
+        ${s.roles && s.roles.length === 1 && s.roles[0] === 'Public' ? '<span class="screen-role-badge screen-role-public screen-role-inline">PUBLIC</span>' : ''}
+        ${s.roles && s.roles.length === 1 && s.roles[0] === 'Registered' ? '<span class="screen-role-badge screen-role-registered screen-role-inline">REGISTERED</span>' : ''}
       </div>
       <div class="var-value-wrap">
         <button class="btn-icon btn-navigate" data-url="${escAttr(navUrl)}" title="Navigate to ${esc(s.name)}">
@@ -102,7 +116,7 @@ function buildScreenRow(s) {
     if (isLoading) {
       html += `<div class="screen-details-loading"><span class="mini-spinner"></span> Loading...</div>`;
     } else if (s.details) {
-      html += buildScreenDetails(s.details, isCurrent);
+      html += buildScreenDetails(s.details, isCurrent, s.roles);
     }
     html += `</div>`;
   }
@@ -110,8 +124,17 @@ function buildScreenRow(s) {
   return html;
 }
 
-function buildScreenDetails(details, isCurrent) {
+function buildScreenDetails(details, isCurrent, roles) {
   let html = "";
+
+  // Roles (skip if already shown inline as Public/Registered badge)
+  const isInlineRole = roles && roles.length === 1 && (roles[0] === 'Public' || roles[0] === 'Registered');
+  if (roles && roles.length > 0 && !isInlineRole) {
+    html += `<div class="screen-detail-section">`;
+    html += `<div class="screen-detail-header">Roles</div>`;
+    html += `<div class="screen-detail-item screen-roles-list">${buildRoleBadges(roles)}</div>`;
+    html += `</div>`;
+  }
 
   // Input Parameters
   if (details.inputParameters.length > 0) {
@@ -187,7 +210,8 @@ function buildScreenDetails(details, isCurrent) {
 
   // If no details at all
   const hasDataActions = details.dataActions && details.dataActions.length > 0;
-  if (details.inputParameters.length === 0 && details.localVariables.length === 0 &&
+  const hasRoles = roles && roles.length > 0 && !isInlineRole;
+  if (!hasRoles && details.inputParameters.length === 0 && details.localVariables.length === 0 &&
     details.aggregates.length === 0 && !hasDataActions && details.serverActions.length === 0 &&
     details.screenActions.length === 0) {
     html += `<div class="screen-details-empty">No details found for this screen.</div>`;
