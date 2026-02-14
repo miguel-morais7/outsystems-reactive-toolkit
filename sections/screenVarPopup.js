@@ -13,7 +13,7 @@ import { flashRow, toast } from '../utils/ui.js';
 /*  State                                                              */
 /* ================================================================== */
 let popupOverlay = null;
-let popupState = null; // { internalName, name, type }
+let popupState = null; // { internalName, name, type } or { methodName, attrName, name, type, isActionParam: true }
 
 /* ================================================================== */
 /*  Public API                                                         */
@@ -159,6 +159,56 @@ export async function openVarPopup(internalName, name, type) {
     }
 
     // Render the tree view
+    const body = popupOverlay.querySelector(".var-popup-body");
+    if (body) {
+      body.innerHTML = `<div class="var-tree">${buildTreeNode(result.tree, [], 0)}</div>`;
+    }
+  } catch (e) {
+    renderPopupError(e.message);
+  }
+}
+
+/**
+ * Open the inspect popup for a complex type action parameter.
+ * Sends INIT_ACTION_PARAM to create a default value and render the tree.
+ */
+export async function openActionParamPopup(methodName, attrName, name, type) {
+  popupState = { methodName, attrName, name, type, isActionParam: true };
+
+  // Show popup with loading state
+  popupOverlay.innerHTML = `
+    <div class="var-popup">
+      <div class="var-popup-header">
+        <div class="var-popup-header-info">
+          <div class="var-popup-title">${esc(name)}</div>
+          <div class="var-popup-subtitle">${esc(type)} (action parameter)</div>
+        </div>
+        <button class="var-popup-close" title="Close">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="var-popup-body">
+        <div class="var-popup-loading"><span class="mini-spinner"></span> Initializing…</div>
+      </div>
+    </div>`;
+  popupOverlay.classList.remove("hidden");
+
+  try {
+    const result = await sendMessage({
+      action: "INIT_ACTION_PARAM",
+      methodName,
+      attrName,
+    });
+
+    if (!result || !result.ok) {
+      renderPopupError(result?.error || "Failed to initialize action parameter.");
+      return;
+    }
+
     const body = popupOverlay.querySelector(".var-popup-body");
     if (body) {
       body.innerHTML = `<div class="var-tree">${buildTreeNode(result.tree, [], 0)}</div>`;
@@ -319,7 +369,8 @@ function cleanAttrName(name) {
 }
 
 /**
- * Commit a tree leaf value change via SET_SCREEN_VAR_DEEP.
+ * Commit a tree leaf value change.
+ * Dispatches to SET_SCREEN_VAR_DEEP or SET_ACTION_PARAM_DEEP based on mode.
  */
 async function commitTreeLeaf(leafEl, newValue) {
   if (!popupState) return;
@@ -335,13 +386,25 @@ async function commitTreeLeaf(leafEl, newValue) {
   }
 
   try {
-    const result = await sendMessage({
-      action: "SET_SCREEN_VAR_DEEP",
-      internalName: popupState.internalName,
-      path,
-      value: newValue,
-      dataType,
-    });
+    let result;
+    if (popupState.isActionParam) {
+      result = await sendMessage({
+        action: "SET_ACTION_PARAM_DEEP",
+        methodName: popupState.methodName,
+        attrName: popupState.attrName,
+        path,
+        value: newValue,
+        dataType,
+      });
+    } else {
+      result = await sendMessage({
+        action: "SET_SCREEN_VAR_DEEP",
+        internalName: popupState.internalName,
+        path,
+        value: newValue,
+        dataType,
+      });
+    }
 
     if (!result || !result.ok) {
       throw new Error(result?.error || "Failed to set value.");
@@ -369,7 +432,7 @@ async function commitTreeLeaf(leafEl, newValue) {
 
 /**
  * Handle clicking the "Add record" button on a list node.
- * Sends LIST_APPEND, then re-renders the popup tree.
+ * Dispatches to LIST_APPEND or ACTION_PARAM_LIST_APPEND based on mode.
  */
 async function handleListAppendClick(btn) {
   if (!popupState) return;
@@ -387,11 +450,21 @@ async function handleListAppendClick(btn) {
   btn.textContent = "Adding…";
 
   try {
-    const result = await sendMessage({
-      action: "LIST_APPEND",
-      internalName: popupState.internalName,
-      path,
-    });
+    let result;
+    if (popupState.isActionParam) {
+      result = await sendMessage({
+        action: "ACTION_PARAM_LIST_APPEND",
+        methodName: popupState.methodName,
+        attrName: popupState.attrName,
+        path,
+      });
+    } else {
+      result = await sendMessage({
+        action: "LIST_APPEND",
+        internalName: popupState.internalName,
+        path,
+      });
+    }
 
     if (!result || !result.ok) {
       throw new Error(result?.error || "Failed to append record.");
@@ -413,7 +486,7 @@ async function handleListAppendClick(btn) {
 
 /**
  * Handle clicking the delete button on a list item.
- * Sends LIST_DELETE, then re-renders the popup tree.
+ * Dispatches to LIST_DELETE or ACTION_PARAM_LIST_DELETE based on mode.
  */
 async function handleListDeleteClick(btn) {
   if (!popupState) return;
@@ -437,12 +510,23 @@ async function handleListDeleteClick(btn) {
   if (listItem) listItem.style.opacity = "0.5";
 
   try {
-    const result = await sendMessage({
-      action: "LIST_DELETE",
-      internalName: popupState.internalName,
-      path,
-      index,
-    });
+    let result;
+    if (popupState.isActionParam) {
+      result = await sendMessage({
+        action: "ACTION_PARAM_LIST_DELETE",
+        methodName: popupState.methodName,
+        attrName: popupState.attrName,
+        path,
+        index,
+      });
+    } else {
+      result = await sendMessage({
+        action: "LIST_DELETE",
+        internalName: popupState.internalName,
+        path,
+        index,
+      });
+    }
 
     if (!result || !result.ok) {
       throw new Error(result?.error || "Failed to delete record.");

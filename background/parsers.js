@@ -258,15 +258,92 @@ export async function fetchScreenDetails(baseUrl, moduleName, flow, screenName) 
 
   // ----------------------------------------------------------------
   // Parse Screen Actions (Client Actions)
-  // Pattern: Controller.prototype._actionName$Action = function
-  // We look for the underscore-prefixed versions which are the actual implementations
+  // Pattern: Controller.prototype._actionName$Action = function (implementation)
+  //          Controller.prototype.actionName$Action = function(params..., callContext) (proxy)
   // ----------------------------------------------------------------
+
+  // Build a map of action name → input param attr names by matching proxy
+  // params to internal function assignments (vars.value.ATTR = PARAM)
+  const actionInputAttrNames = {};
+  const proxyPattern = /Controller\.prototype\.(\w+)\$Action\s*=\s*function\s*\(([^)]*)\)/g;
+  let proxyMatch;
+  while ((proxyMatch = proxyPattern.exec(scriptText)) !== null) {
+    const actionName = proxyMatch[1];
+    const sigParams = proxyMatch[2].split(",").map(p => p.trim()).filter(p => p && p !== "callContext");
+    // Find the internal function body to map proxy params → attrNames
+    const internalRe = new RegExp("Controller\\.prototype\\._" + actionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "\\$Action\\s*=\\s*function\\s*\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\};");
+    const internalMatch = internalRe.exec(scriptText);
+    const resolvedAttrNames = new Set();
+    if (internalMatch) {
+      const body = internalMatch[1];
+      for (const param of sigParams) {
+        const assignRe = new RegExp("vars\\.value\\.(\\w+)\\s*=\\s*" + param + "(?:\\.|;|\\s|\\))");
+        const assignMatch = assignRe.exec(body);
+        if (assignMatch) {
+          resolvedAttrNames.add(assignMatch[1]);
+        }
+      }
+    }
+    // Use resolved attrNames if found, otherwise fall back to proxy param names
+    actionInputAttrNames[actionName.toLowerCase()] = resolvedAttrNames.size > 0 ? resolvedAttrNames : new Set(sigParams);
+  }
+
+  // Parse actual action implementations (underscore-prefixed)
   const screenActionPattern = /Controller\.prototype\._(\w+)\$Action\s*=/g;
   while ((match = screenActionPattern.exec(scriptText)) !== null) {
     const name = match[1];
     // Convert camelCase: onSort -> OnSort
     const displayName = name.charAt(0).toUpperCase() + name.slice(1);
-    result.screenActions.push({ name: displayName });
+    // The public proxy method name (without underscore prefix)
+    const methodName = name + "$Action";
+    result.screenActions.push({ name: displayName, methodName, inputs: [], locals: [] });
+  }
+
+  // ----------------------------------------------------------------
+  // Enrich Screen Actions with parameter metadata
+  // Pattern: Controller.registerVariableGroupType("...ActionName$vars", [{
+  //   name: "ParamDisplay", attrName: "paramInternal", mandatory: bool,
+  //   dataType: OS.DataTypes.DataTypes.TypeName, defaultValue: fn
+  // }]);
+  // ----------------------------------------------------------------
+  const TYPE_MAP_ACTIONS = { DateTime: "Date Time", LongInteger: "Long Integer", PhoneNumber: "Phone Number" };
+  const varGroupPattern = /Controller\.registerVariableGroupType\s*\(\s*"([^"]+\$vars)"\s*,\s*\[([\s\S]*?)\]\s*\)/g;
+  let varGroupMatch;
+  while ((varGroupMatch = varGroupPattern.exec(scriptText)) !== null) {
+    const varGroupKey = varGroupMatch[1];
+    const entriesStr = varGroupMatch[2];
+
+    // Extract action name from key: "Module.Flow.Screen.ActionName$vars" → "ActionName"
+    const keyParts = varGroupKey.replace("$vars", "").split(".");
+    const actionNameFromKey = keyParts[keyParts.length - 1];
+
+    // Find the matching screen action
+    const action = result.screenActions.find(
+      a => a.name.toLowerCase() === actionNameFromKey.toLowerCase()
+    );
+    if (!action) continue;
+
+    // Get the set of input param attr names for this action
+    const inputSet = actionInputAttrNames[actionNameFromKey.toLowerCase()] || new Set();
+
+    // Parse individual entries and classify as input or local
+    const paramPattern = /name:\s*"([^"]+)"[\s\S]*?attrName:\s*"([^"]+)"[\s\S]*?mandatory:\s*(true|false)[\s\S]*?dataType:\s*OS\.DataTypes\.DataTypes\.(\w+)/g;
+    let paramMatch;
+    while ((paramMatch = paramPattern.exec(entriesStr)) !== null) {
+      const rawType = paramMatch[4];
+      const dataType = TYPE_MAP_ACTIONS[rawType] || rawType;
+      const entry = {
+        name: paramMatch[1],
+        attrName: paramMatch[2],
+        dataType,
+        mandatory: paramMatch[3] === "true",
+      };
+      if (inputSet.has(entry.attrName)) {
+        action.inputs.push(entry);
+      } else {
+        action.locals.push(entry);
+      }
+    }
   }
 
   return result;

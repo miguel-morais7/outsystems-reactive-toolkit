@@ -10,7 +10,7 @@
 
 import { esc, escAttr, debounce, sendMessage, formatDateForInput } from '../utils/helpers.js';
 import { show, hide, flashRow, toast } from '../utils/ui.js';
-import { initPopupListeners, openVarPopup } from './screenVarPopup.js';
+import { initPopupListeners, openVarPopup, openActionParamPopup } from './screenVarPopup.js';
 
 /* ================================================================== */
 /*  State                                                              */
@@ -22,6 +22,7 @@ let currentScreen = "";
 let collapsedScreenFlows = {};
 let expandedScreens = {};  // screenUrl -> true/false
 let loadingScreens = {};  // screenUrl -> true (while fetching)
+let expandedActions = {};  // methodName -> true/false
 
 /* ================================================================== */
 /*  DOM references                                                     */
@@ -48,11 +49,24 @@ export function init() {
   inputSearch.addEventListener("input", debounce(render, 150));
 
   screenList.addEventListener("click", (e) => {
-    // Inspect popup icon for complex types
+    // Inspect popup icon for complex screen variables
     const popupBtn = e.target.closest(".btn-var-popup");
     if (popupBtn) {
       e.stopPropagation();
       openVarPopup(popupBtn.dataset.internalName, popupBtn.dataset.name, popupBtn.dataset.type);
+      return;
+    }
+
+    // Inspect popup icon for complex action parameters
+    const actionPopupBtn = e.target.closest(".btn-action-param-popup");
+    if (actionPopupBtn) {
+      e.stopPropagation();
+      openActionParamPopup(
+        actionPopupBtn.dataset.method,
+        actionPopupBtn.dataset.attrName,
+        actionPopupBtn.dataset.name,
+        actionPopupBtn.dataset.type
+      );
       return;
     }
 
@@ -73,6 +87,37 @@ export function init() {
       boolBtn.classList.toggle("active", newVal);
       const row = boolBtn.closest(".screen-var-row");
       doSetScreenVar(boolBtn.dataset.internalName, newVal, "Boolean", row);
+      return;
+    }
+
+    // Trigger action button
+    const triggerBtn = e.target.closest(".btn-trigger-action");
+    if (triggerBtn) {
+      e.stopPropagation();
+      invokeScreenAction(triggerBtn);
+      return;
+    }
+
+    // Action header expand/collapse toggle
+    const actionHeader = e.target.closest(".screen-action-header");
+    if (actionHeader && !e.target.closest(".btn-trigger-action")) {
+      e.stopPropagation();
+      const actionItem = actionHeader.closest(".screen-action-item");
+      if (actionItem) {
+        const method = actionItem.dataset.method;
+        expandedActions[method] = !expandedActions[method];
+        actionItem.classList.toggle("expanded", !!expandedActions[method]);
+        const body = actionItem.querySelector(".screen-action-body-wrap");
+        if (body) body.classList.toggle("collapsed", !expandedActions[method]);
+      }
+      return;
+    }
+
+    // Boolean toggle for action params
+    const actionParamToggle = e.target.closest(".action-param-toggle");
+    if (actionParamToggle) {
+      e.stopPropagation();
+      actionParamToggle.classList.toggle("active");
       return;
     }
 
@@ -313,9 +358,13 @@ function buildScreenDetails(details, isCurrent) {
     html += `<div class="screen-detail-section">`;
     html += `<div class="screen-detail-header">Screen Actions</div>`;
     for (const ca of details.screenActions) {
-      html += `<div class="screen-detail-item">
-        <span class="screen-detail-name">${esc(ca.name)}</span>
-      </div>`;
+      if (isCurrent && ca.methodName) {
+        html += buildScreenActionItem(ca);
+      } else {
+        html += `<div class="screen-detail-item">
+          <span class="screen-detail-name">${esc(ca.name)}</span>
+        </div>`;
+      }
     }
     html += `</div>`;
   }
@@ -331,12 +380,100 @@ function buildScreenDetails(details, isCurrent) {
   return html;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Shared type control builder                                        */
+/* ------------------------------------------------------------------ */
+const INSPECT_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M15 3h6v6"/><path d="M10 14L21 3"/>
+  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+</svg>`;
+
+/**
+ * Build the HTML for a type-appropriate input control.
+ * Shared between screen variables and action parameters.
+ *
+ * @param {Object} opts
+ * @param {string} opts.dataType - OS type name
+ * @param {*}      [opts.value] - Current display value (null/undefined for empty)
+ * @param {string} opts.identifier - Data attribute value (internalName or attrName)
+ * @param {string} opts.identifierAttr - Data attribute name (e.g. "data-internal-name")
+ * @param {string} opts.inputClass - CSS class for the input (e.g. "screen-var-input" or "action-param-input")
+ * @param {string} opts.toggleClass - CSS class for boolean toggle (e.g. "screen-var-toggle" or "action-param-toggle")
+ * @param {string} opts.name - Display name (for inspect button title)
+ * @param {string} [opts.methodName] - Action method name (for action param inspect buttons)
+ * @param {boolean} [opts.isReadOnly] - Whether the control is read-only
+ * @returns {string} HTML string
+ */
+function buildTypeControl(opts) {
+  const { dataType, value, identifier, identifierAttr, inputClass, toggleClass, name, methodName, isReadOnly } = opts;
+  const isComplex = READ_ONLY_TYPES.includes(dataType);
+
+  if (dataType === "Boolean" && !isComplex) {
+    const active = value === true || value === "true" || value === "True";
+    return `<button class="bool-toggle ${escAttr(toggleClass)} ${active ? "active" : ""}"
+                    ${identifierAttr}="${escAttr(identifier)}" data-type="Boolean"
+                    ${isReadOnly ? "disabled" : ""}>
+              <span class="knob"></span>
+            </button>`;
+  }
+
+  if ((dataType === "Date" || dataType === "Time" || dataType === "Date Time") && !isComplex) {
+    const inputType = dataType === "Date" ? "date" : dataType === "Time" ? "time" : "datetime-local";
+    const displayValue = value != null ? formatDateForInput(value, dataType) : "";
+    return `<input class="var-value var-value-date screen-var-date ${escAttr(inputClass)}"
+                   type="${inputType}"
+                   value="${escAttr(displayValue)}"
+                   ${identifierAttr}="${escAttr(identifier)}"
+                   data-type="${escAttr(dataType)}"
+                   data-original="${escAttr(displayValue)}"
+                   ${isReadOnly ? "readonly" : ""}
+                   ${dataType === "Time" ? 'step="1"' : ""} />`;
+  }
+
+  if (isComplex) {
+    // Complex types — show inspect popup button
+    if (methodName) {
+      // Action parameter complex type
+      return `<button class="btn-icon btn-action-param-popup"
+                      data-method="${escAttr(methodName)}"
+                      data-attr-name="${escAttr(identifier)}"
+                      data-type="${escAttr(dataType)}"
+                      data-name="${escAttr(name)}"
+                      title="Inspect ${esc(name)}">
+                ${INSPECT_ICON_SVG}
+              </button>`;
+    }
+    // Screen variable complex type
+    return `<button class="btn-icon btn-var-popup"
+                    data-internal-name="${escAttr(identifier)}"
+                    data-type="${escAttr(dataType)}"
+                    data-name="${escAttr(name)}"
+                    title="Inspect ${esc(name)}">
+              ${INSPECT_ICON_SVG}
+            </button>`;
+  }
+
+  // Numeric types → number input
+  const isNumeric = ["Integer", "Decimal", "Currency", "Long Integer"].includes(dataType);
+  const inputType = isNumeric ? "number" : "text";
+  const step = (dataType === "Decimal" || dataType === "Currency") ? 'step="any"' : "";
+  const displayValue = value != null ? String(value) : "";
+  return `<input class="var-value ${escAttr(inputClass)}"
+                 type="${inputType}"
+                 value="${escAttr(displayValue)}"
+                 ${identifierAttr}="${escAttr(identifier)}"
+                 data-type="${escAttr(dataType)}"
+                 data-original="${escAttr(displayValue)}"
+                 ${step}
+                 ${isReadOnly ? "readonly" : ""} />`;
+}
+
 /**
  * Build a single variable/input param item.
  * If isCurrent is true and the variable has a live value, show editable controls.
  */
 function buildScreenVarItem(v, isCurrent) {
-  const isReadOnly = READ_ONLY_TYPES.includes(v.type);
   const hasLiveValue = isCurrent && v.value !== undefined;
 
   // If not the current screen or no live value, show simple display
@@ -348,60 +485,104 @@ function buildScreenVarItem(v, isCurrent) {
   }
 
   // Current screen with live value — show editable control
-  let valueControl = "";
-
-  if (v.type === "Boolean" && !isReadOnly) {
-    const active = v.value === true || v.value === "true" || v.value === "True";
-    valueControl = `
-      <button class="bool-toggle screen-var-toggle ${active ? "active" : ""}"
-              data-internal-name="${escAttr(v.internalName)}" data-type="Boolean"
-              ${isReadOnly ? "disabled" : ""}>
-        <span class="knob"></span>
-      </button>`;
-  } else if ((v.type === "Date" || v.type === "Time" || v.type === "Date Time") && !isReadOnly) {
-    const inputType = v.type === "Date" ? "date" : v.type === "Time" ? "time" : "datetime-local";
-    const displayValue = formatDateForInput(v.value, v.type);
-    valueControl = `
-      <input class="var-value var-value-date screen-var-date"
-             type="${inputType}"
-             value="${escAttr(displayValue)}"
-             data-internal-name="${escAttr(v.internalName)}"
-             data-type="${esc(v.type)}"
-             data-original="${escAttr(displayValue)}"
-             ${isReadOnly ? "readonly" : ""}
-             ${v.type === "Time" ? 'step="1"' : ""}
-             title="${isReadOnly ? "Read-only" : "Edit to save"}" />`;
-  } else if (isReadOnly) {
-    // Complex types — show inspect icon instead of read-only input
-    valueControl = `
-      <button class="btn-icon btn-var-popup"
-              data-internal-name="${escAttr(v.internalName)}"
-              data-type="${esc(v.type)}"
-              data-name="${escAttr(v.name)}"
-              title="Inspect ${esc(v.name)}">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M15 3h6v6"/>
-          <path d="M10 14L21 3"/>
-          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-        </svg>
-      </button>`;
-  } else {
-    const displayValue = v.value === null ? "" : String(v.value);
-    valueControl = `
-      <input class="var-value screen-var-input"
-             type="text"
-             value="${escAttr(displayValue)}"
-             data-internal-name="${escAttr(v.internalName)}"
-             data-type="${esc(v.type)}"
-             data-original="${escAttr(displayValue)}"
-             title="Press Enter to save" />`;
-  }
+  const valueControl = buildTypeControl({
+    dataType: v.type,
+    value: v.value,
+    identifier: v.internalName,
+    identifierAttr: "data-internal-name",
+    inputClass: "screen-var-input",
+    toggleClass: "screen-var-toggle",
+    name: v.name,
+    isReadOnly: v.readOnly,
+  });
 
   return `<div class="screen-detail-item screen-var-row" data-internal-name="${escAttr(v.internalName)}">
     <div class="screen-var-info">
       <span class="screen-detail-name">${esc(v.name)}</span>
       <span class="screen-detail-type">${esc(v.type)}</span>
+    </div>
+    <div class="screen-var-value-wrap">
+      ${valueControl}
+    </div>
+  </div>`;
+}
+
+/**
+ * Build an interactive action item for the current screen.
+ * Shows the action name, Run button, input parameters (editable),
+ * and local variables (read-only display).
+ */
+function buildScreenActionItem(action) {
+  const hasInputs = action.inputs && action.inputs.length > 0;
+  const hasLocals = action.locals && action.locals.length > 0;
+  const hasBody = hasInputs || hasLocals;
+  const isExpanded = !!expandedActions[action.methodName];
+
+  let html = `<div class="screen-action-item ${isExpanded ? "expanded" : ""}" data-method="${escAttr(action.methodName)}">`;
+  html += `<div class="screen-action-header">`;
+  if (hasBody) {
+    html += `<svg class="screen-action-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+  }
+  html += `<span class="screen-detail-name">${esc(action.name)}</span>`;
+  html += `<button class="btn-trigger-action" data-method="${escAttr(action.methodName)}" title="Trigger ${esc(action.name)}">`;
+  html += `<svg class="action-play-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+  html += `<span class="action-btn-label">Run</span>`;
+  html += `</button>`;
+  html += `</div>`;
+
+  if (hasBody) {
+    html += `<div class="screen-action-body-wrap ${isExpanded ? "" : "collapsed"}">`;
+
+    // Input Parameters — editable, same controls as screen variables
+    if (hasInputs) {
+      html += `<div class="screen-action-body screen-action-inputs">`;
+      html += `<div class="screen-action-sub-header">Input Parameters</div>`;
+      for (const p of action.inputs) {
+        html += buildActionParamRow(p, action.methodName);
+      }
+      html += `</div>`;
+    }
+
+    // Local Variables — read-only display (name + type)
+    if (hasLocals) {
+      html += `<div class="screen-action-body screen-action-locals">`;
+      html += `<div class="screen-action-sub-header">Local Variables</div>`;
+      for (const l of action.locals) {
+        html += `<div class="screen-detail-item">
+          <span class="screen-detail-name">${esc(l.name)}</span>
+          <span class="screen-detail-type">${esc(l.dataType)}</span>
+        </div>`;
+      }
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+/**
+ * Build a single action parameter row using the same layout as screen variable rows.
+ */
+function buildActionParamRow(param, methodName) {
+  const valueControl = buildTypeControl({
+    dataType: param.dataType,
+    value: null, // action params start empty
+    identifier: param.attrName || param.name,
+    identifierAttr: "data-param-name",
+    inputClass: "action-param-input",
+    toggleClass: "action-param-toggle",
+    name: param.name,
+    methodName,
+  });
+
+  return `<div class="screen-detail-item screen-var-row screen-action-param-row"
+               data-param-name="${escAttr(param.attrName || param.name)}">
+    <div class="screen-var-info">
+      <span class="screen-detail-name">${esc(param.name)}${param.mandatory ? '<span class="action-param-required">*</span>' : ""}</span>
+      <span class="screen-detail-type">${esc(param.dataType)}</span>
     </div>
     <div class="screen-var-value-wrap">
       ${valueControl}
@@ -463,6 +644,77 @@ function updateCachedVarValue(internalName, newValue) {
   }
 }
 
+/**
+ * Invoke a screen action via the trigger button.
+ * Collects param values from input parameter rows and sends INVOKE_SCREEN_ACTION.
+ */
+async function invokeScreenAction(triggerBtn) {
+  const methodName = triggerBtn.dataset.method;
+  const actionItem = triggerBtn.closest(".screen-action-item");
+  if (!actionItem) return;
+
+  // Collect parameter values from the inputs section only (not locals)
+  const paramValues = [];
+  const inputsSection = actionItem.querySelector(".screen-action-inputs");
+  if (inputsSection) {
+    const paramRows = inputsSection.querySelectorAll(".screen-action-param-row");
+    paramRows.forEach(row => {
+      const input = row.querySelector(".action-param-input");
+      const toggle = row.querySelector(".action-param-toggle");
+      const popupBtn = row.querySelector(".btn-action-param-popup");
+
+      if (popupBtn) {
+        // Complex type — value is stored in page's temp map
+        paramValues.push({
+          value: null,
+          dataType: popupBtn.dataset.type || "Record",
+          attrName: popupBtn.dataset.attrName,
+          isComplex: true,
+        });
+      } else if (input) {
+        paramValues.push({
+          value: input.value,
+          dataType: input.dataset.type || "Text",
+        });
+      } else if (toggle) {
+        paramValues.push({
+          value: toggle.classList.contains("active"),
+          dataType: "Boolean",
+        });
+      }
+    });
+  }
+
+  // Visual feedback: show loading state
+  triggerBtn.disabled = true;
+  const label = triggerBtn.querySelector(".action-btn-label");
+  const origLabel = label ? label.textContent : "";
+  if (label) label.textContent = "...";
+  triggerBtn.classList.add("running");
+
+  try {
+    const result = await sendMessage({
+      action: "INVOKE_SCREEN_ACTION",
+      methodName,
+      paramValues,
+    });
+
+    if (!result || !result.ok) {
+      throw new Error(result?.error || "Action failed.");
+    }
+
+    flashRow(actionItem, "saved");
+    toast("Action triggered", "success");
+  } catch (err) {
+    flashRow(actionItem, "error");
+    toast(err.message, "error");
+  } finally {
+    triggerBtn.disabled = false;
+    if (label) label.textContent = origLabel;
+    triggerBtn.classList.remove("running");
+  }
+}
+
 async function toggleScreenExpand(screenUrl, flow, screenName) {
   // Toggle expansion
   expandedScreens[screenUrl] = !expandedScreens[screenUrl];
@@ -502,9 +754,10 @@ async function toggleScreenExpand(screenUrl, flow, screenName) {
         screenActions: response.screenActions || [],
       };
 
-      // If this is the current screen, fetch live runtime values
+      // If this is the current screen, fetch live runtime values and action metadata
       if (isCurrent) {
         await fetchLiveValues(details);
+        await enrichScreenActions(details);
       }
 
       // Store details directly on the screen object
@@ -545,6 +798,42 @@ async function toggleScreenExpand(screenUrl, flow, screenName) {
 
   loadingScreens[screenUrl] = false;
   render();
+}
+
+/**
+ * Enrich screen actions with runtime metadata from the live controller.
+ * This provides accurate parameter type info and ensures methodName is set.
+ */
+async function enrichScreenActions(details) {
+  if (!details.screenActions || details.screenActions.length === 0) return;
+
+  try {
+    const result = await sendMessage({ action: "GET_SCREEN_ACTIONS" });
+    if (!result || !result.ok || !result.actions) return;
+
+    // Build a map of runtime actions by normalized name
+    const runtimeMap = {};
+    for (const a of result.actions) {
+      runtimeMap[a.name.toLowerCase()] = a;
+    }
+
+    // Merge runtime data into statically-parsed actions
+    for (const action of details.screenActions) {
+      const runtime = runtimeMap[action.name.toLowerCase()];
+      if (runtime) {
+        action.methodName = runtime.methodName;
+        // Use runtime inputs/locals if they have richer type info
+        if (runtime.inputs && runtime.inputs.length > 0) {
+          action.inputs = runtime.inputs;
+        }
+        if (runtime.locals && runtime.locals.length > 0) {
+          action.locals = runtime.locals;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[Screens] Failed to enrich screen actions:", e.message);
+  }
 }
 
 /**

@@ -979,6 +979,124 @@ body {
 }
 
 /* ------------------------------------------------------------------ */
+/*  SCREEN ACTION ITEMS                                                */
+/* ------------------------------------------------------------------ */
+
+.screen-action-item {
+  padding: 8px 10px;
+  margin: 2px 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.6);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.screen-action-item:hover {
+  background: rgba(228, 62, 43, 0.08);
+}
+
+.screen-action-item.saved {
+  animation: flash-green .6s ease;
+}
+
+.screen-action-item.error {
+  animation: flash-red .6s ease;
+}
+
+.screen-action-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.screen-action-header .btn-trigger-action {
+  margin-left: auto;
+}
+
+.screen-action-chevron {
+  flex-shrink: 0;
+  transition: transform var(--transition);
+  color: var(--text-muted);
+  transform: rotate(-90deg);
+}
+
+.screen-action-item.expanded .screen-action-chevron {
+  transform: rotate(0deg);
+}
+
+.screen-action-body-wrap {
+  overflow: hidden;
+}
+
+.screen-action-body-wrap.collapsed {
+  display: none;
+}
+
+.btn-trigger-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--os-red);
+  border-radius: 4px;
+  background: linear-gradient(135deg, var(--os-red) 0%, var(--os-red-dark) 100%);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-trigger-action:hover:not(:disabled) {
+  filter: brightness(1.1);
+  box-shadow: 0 2px 8px rgba(228, 62, 43, 0.35);
+}
+
+.btn-trigger-action:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.btn-trigger-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-trigger-action.running {
+  opacity: 0.7;
+}
+
+.action-play-icon {
+  flex-shrink: 0;
+}
+
+.screen-action-body {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(228, 62, 43, 0.2);
+}
+
+.screen-action-sub-header {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  padding: 2px 4px 4px;
+}
+
+.screen-action-param-row {
+  /* Inherits screen-var-row grid layout */
+}
+
+.action-param-required {
+  color: var(--os-red);
+  margin-left: 2px;
+  font-weight: 400;
+}
+
+/* ------------------------------------------------------------------ */
 /*  APP METADATA SECTION                                               */
 /* ------------------------------------------------------------------ */
 
@@ -999,18 +1117,22 @@ body {
 /*  VARIABLE INSPECT POPUP                                             */
 /* ------------------------------------------------------------------ */
 
-/* Inspect icon button in screen var rows */
-.btn-var-popup {
+/* Inspect icon button in screen var rows and action param rows */
+.btn-var-popup,
+.btn-action-param-popup {
   opacity: 0.4;
   transition: opacity var(--transition), color var(--transition);
 }
 
 .screen-detail-item:hover .btn-var-popup,
-.btn-var-popup:focus {
+.screen-detail-item:hover .btn-action-param-popup,
+.btn-var-popup:focus,
+.btn-action-param-popup:focus {
   opacity: 1;
 }
 
-.btn-var-popup:hover {
+.btn-var-popup:hover,
+.btn-action-param-popup:hover {
   color: var(--os-red);
   background: var(--bg-hover);
 }
