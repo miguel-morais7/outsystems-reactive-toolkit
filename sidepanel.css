@@ -1185,25 +1185,27 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 16px 6px 36px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  background: var(--bg-primary);
+  padding: 7px 16px 7px 36px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b5b5a;
+  background: linear-gradient(90deg, rgba(228, 62, 43, 0.06) 0%, rgba(255, 255, 255, 1) 100%);
   cursor: pointer;
   user-select: none;
   border-bottom: 1px solid var(--border);
-  transition: background var(--transition);
+  transition: all var(--transition);
 }
 
 .entity-header:hover {
-  background: var(--bg-hover);
+  background: linear-gradient(90deg, rgba(228, 62, 43, 0.10) 0%, rgba(255, 255, 255, 1) 100%);
 }
 
 .entity-chevron {
-  transition: transform var(--transition);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   flex-shrink: 0;
-  color: var(--text-muted);
+  color: var(--os-red);
 }
 
 .entity-header.collapsed .entity-chevron {
@@ -1211,7 +1213,7 @@ body {
 }
 
 .entity-name {
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-primary);
 }
 
@@ -1223,6 +1225,18 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.entity-header .count-badge {
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(228, 62, 43, 0.12);
+  color: var(--os-red-dark);
+  border-radius: 12px;
+  padding: 2px 8px;
+  border: 1px solid rgba(228, 62, 43, 0.2);
 }
 
 .record-id {
@@ -1238,6 +1252,10 @@ body {
 
 .entity-body.collapsed {
   display: none;
+}
+
+.static-entity-record-row {
+  padding-left: 48px;
 }
 
 .static-entity-record-row .btn-copy-guid,
