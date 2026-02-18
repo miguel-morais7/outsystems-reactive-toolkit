@@ -55,6 +55,7 @@ export async function toggleScreenExpand(screenUrl, flow, screenName) {
         await fetchLiveValues(details);
         await enrichScreenActions(details);
         await enrichDataActions(details);
+        await enrichAggregates(details);
       }
 
       // Store details directly on the screen object
@@ -222,5 +223,38 @@ async function fetchLiveValues(details) {
   } catch (e) {
     // Silently fail — the screen details will still show without live values
     console.warn("[Screens] Failed to fetch live values:", e.message);
+  }
+}
+
+/**
+ * Enrich aggregates with runtime metadata from the live controller.
+ * This provides output parameter values and verifies refresh method availability.
+ */
+async function enrichAggregates(details) {
+  if (!details.aggregates || details.aggregates.length === 0) return;
+
+  try {
+    const result = await sendMessage({ action: "GET_AGGREGATES" });
+    if (!result || !result.ok || !result.aggregates) return;
+
+    // Build a map of runtime aggregates by normalized name
+    const runtimeMap = {};
+    for (const aggr of result.aggregates) {
+      runtimeMap[aggr.name.toLowerCase()] = aggr;
+    }
+
+    // Merge runtime data into statically-parsed aggregates
+    for (const aggr of details.aggregates) {
+      const runtime = runtimeMap[aggr.name.toLowerCase()];
+      if (runtime) {
+        aggr.refreshMethodName = runtime.refreshMethodName;
+        aggr.varAttrName = runtime.varAttrName || aggr.varAttrName;
+        if (runtime.outputs && runtime.outputs.length > 0) {
+          aggr.outputs = runtime.outputs;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[Screens] Failed to enrich aggregates:", e.message);
   }
 }

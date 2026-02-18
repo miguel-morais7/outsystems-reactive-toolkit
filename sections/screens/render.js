@@ -7,7 +7,7 @@
 import { esc, escAttr } from '../../utils/helpers.js';
 import { show, hide } from '../../utils/ui.js';
 import { state, inputSearch, screenList, screenCount, emptyState, sectionEl } from './state.js';
-import { buildScreenVarItem, buildScreenActionItem, buildDataActionItem } from './builders.js';
+import { buildScreenVarItem, buildScreenActionItem, buildDataActionItem, buildAggregateItem } from './builders.js';
 
 /** Render (or re-render) the screens list. */
 export function render() {
@@ -171,9 +171,13 @@ function buildScreenDetails(details, isCurrent, roles, screenUrl) {
   if (details.aggregates.length > 0) {
     let items = "";
     for (const a of details.aggregates) {
-      items += `<div class="screen-detail-item">
-        <span class="screen-detail-name">${esc(a.name)}</span>
-      </div>`;
+      if (isCurrent && a.refreshMethodName) {
+        items += buildAggregateItem(a);
+      } else {
+        items += `<div class="screen-detail-item">
+          <span class="screen-detail-name">${esc(a.name)}</span>
+        </div>`;
+      }
     }
     html += buildSubSection(screenUrl, "aggregates", "Aggregates", {
       count: details.aggregates.length, html: items

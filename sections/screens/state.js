@@ -16,6 +16,7 @@ export const state = {
   loadingScreens: {},    // screenUrl -> true (while fetching)
   expandedActions: {},   // methodName -> true/false
   expandedDataActions: {},  // refreshMethodName -> true/false
+  expandedAggregates: {},   // refreshMethodName -> true/false
   collapsedSubSections: {},  // "screenUrl::sectionKey" -> true
 };
 

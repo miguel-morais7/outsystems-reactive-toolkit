@@ -7,7 +7,7 @@
 import { sendMessage } from '../../utils/helpers.js';
 import { flashRow, toast } from '../../utils/ui.js';
 import { state } from './state.js';
-import { buildDataActionOutputRow } from './builders.js';
+import { buildDataActionOutputRow, buildAggregateOutputRow } from './builders.js';
 
 /**
  * Invoke a screen action via the trigger button.
@@ -141,6 +141,77 @@ export async function refreshDataAction(triggerBtn) {
 
     flashRow(actionItem, "saved");
     toast("Data action refreshed", "success");
+  } catch (err) {
+    flashRow(actionItem, "error");
+    toast(err.message, "error");
+  } finally {
+    triggerBtn.disabled = false;
+    if (label) label.textContent = origLabel;
+    triggerBtn.classList.remove("running");
+  }
+}
+
+/**
+ * Refresh an aggregate and update its output values in the UI.
+ */
+export async function refreshAggregate(triggerBtn) {
+  const refreshMethodName = triggerBtn.dataset.refreshMethod;
+  const actionItem = triggerBtn.closest(".aggregate-item");
+  if (!actionItem || !refreshMethodName) return;
+
+  // Visual feedback: show loading state
+  triggerBtn.disabled = true;
+  const label = triggerBtn.querySelector(".action-btn-label");
+  const origLabel = label ? label.textContent : "";
+  if (label) label.textContent = "...";
+  triggerBtn.classList.add("running");
+
+  try {
+    const result = await sendMessage({
+      action: "REFRESH_AGGREGATE",
+      refreshMethodName,
+    });
+
+    if (!result || !result.ok) {
+      throw new Error(result?.error || "Aggregate refresh failed.");
+    }
+
+    // Re-fetch output values to update the UI
+    const liveResult = await sendMessage({ action: "GET_AGGREGATES" });
+    if (liveResult?.ok && liveResult.aggregates) {
+      const updated = liveResult.aggregates.find(
+        a => a.refreshMethodName === refreshMethodName
+      );
+      if (updated) {
+        // Update cached details
+        for (const screen of state.allScreens) {
+          if (screen.details?.aggregates) {
+            const aggr = screen.details.aggregates.find(
+              a => a.refreshMethodName === refreshMethodName
+            );
+            if (aggr) {
+              aggr.outputs = updated.outputs;
+              aggr.varAttrName = updated.varAttrName || aggr.varAttrName;
+            }
+          }
+        }
+
+        // Re-render the output in place
+        const bodyWrap = actionItem.querySelector(".screen-action-body-wrap");
+        if (bodyWrap && updated.outputs && updated.outputs.length > 0 && updated.varAttrName) {
+          let bodyHtml = `<div class="screen-action-body screen-action-inputs">`;
+          bodyHtml += `<div class="screen-action-sub-header">Output</div>`;
+          for (const o of updated.outputs) {
+            bodyHtml += buildAggregateOutputRow(o, updated.varAttrName);
+          }
+          bodyHtml += `</div>`;
+          bodyWrap.innerHTML = bodyHtml;
+        }
+      }
+    }
+
+    flashRow(actionItem, "saved");
+    toast("Aggregate refreshed", "success");
   } catch (err) {
     flashRow(actionItem, "error");
     toast(err.message, "error");
