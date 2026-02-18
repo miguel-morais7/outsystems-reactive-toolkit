@@ -257,14 +257,16 @@ function buildPopupToolbar() {
   </div>`;
 }
 
-/** Toggle all tree nodes expanded or collapsed. */
+/** Toggle all tree nodes expanded or collapsed, skipping the root level. */
 function toggleAllTreeNodes(collapse) {
   const headers = popupOverlay.querySelectorAll(".var-tree-header");
   const childrenEls = popupOverlay.querySelectorAll(".var-tree-children");
   for (const h of headers) {
+    if (h.parentElement.classList.contains("var-tree-root")) continue;
     h.classList.toggle("collapsed", collapse);
   }
   for (const c of childrenEls) {
+    if (c.parentElement.classList.contains("var-tree-root")) continue;
     c.classList.toggle("collapsed", collapse);
   }
 }
