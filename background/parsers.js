@@ -445,11 +445,15 @@ export async function fetchScreenDetails(baseUrl, moduleName, flow, screenName, 
   // ----------------------------------------------------------------
   // Parse Screen Variables from VariablesRecord.attributesToDeclare
   // Pattern: this.attr("DisplayName", "internalName", "...", true, false, OS.DataTypes.DataTypes.TypeName, ...)
+  // Scope to VariablesRecord block to avoid picking up DataAction/Aggregate
+  // output record attributes (e.g. DataAction1DataActRec.attributesToDeclare)
   // ----------------------------------------------------------------
+  const varsRecordMatch = scriptText.match(/VariablesRecord\.attributesToDeclare\s*=\s*function\s*\(\)\s*\{([\s\S]*?)\]\.concat/);
+  const varsRecordBody = varsRecordMatch ? varsRecordMatch[1] : scriptText;
   const varPattern = /this\.attr\s*\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*"[^"]*"\s*,\s*(?:true|false)\s*,\s*(?:true|false)\s*,\s*OS\.DataTypes\.DataTypes\.(\w+)/g;
   let match;
   const seenVars = new Set();
-  while ((match = varPattern.exec(scriptText)) !== null) {
+  while ((match = varPattern.exec(varsRecordBody)) !== null) {
     const displayName = match[1];
     const internalName = match[2];
     const rawType = match[3];
