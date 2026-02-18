@@ -49,6 +49,20 @@ export function initPopupListeners(overlayEl) {
       return;
     }
 
+    // Expand all / Collapse all
+    const expandAllBtn = e.target.closest(".btn-expand-all");
+    if (expandAllBtn) {
+      e.stopPropagation();
+      toggleAllTreeNodes(false);
+      return;
+    }
+    const collapseAllBtn = e.target.closest(".btn-collapse-all");
+    if (collapseAllBtn) {
+      e.stopPropagation();
+      toggleAllTreeNodes(true);
+      return;
+    }
+
     // Tree node expand/collapse
     const treeHeader = e.target.closest(".var-tree-header");
     if (treeHeader) {
@@ -158,10 +172,10 @@ export async function openVarPopup(internalName, name, type) {
       return;
     }
 
-    // Render the tree view
+    // Render the tree view with toolbar
     const body = popupOverlay.querySelector(".var-popup-body");
     if (body) {
-      body.innerHTML = `<div class="var-tree">${buildTreeNode(result.tree, [], 0)}</div>`;
+      body.innerHTML = buildPopupToolbar() + `<div class="var-tree">${buildTreeNode(result.tree, [], 0)}</div>`;
     }
   } catch (e) {
     renderPopupError(e.message);
@@ -211,7 +225,7 @@ export async function openActionParamPopup(methodName, attrName, name, type) {
 
     const body = popupOverlay.querySelector(".var-popup-body");
     if (body) {
-      body.innerHTML = `<div class="var-tree">${buildTreeNode(result.tree, [], 0)}</div>`;
+      body.innerHTML = buildPopupToolbar() + `<div class="var-tree">${buildTreeNode(result.tree, [], 0)}</div>`;
     }
   } catch (e) {
     renderPopupError(e.message);
@@ -227,6 +241,32 @@ function closeVarPopup() {
   popupOverlay.classList.add("hidden");
   popupOverlay.innerHTML = "";
   popupState = null;
+}
+
+/** Build the toolbar with expand/collapse all buttons. */
+function buildPopupToolbar() {
+  return `<div class="var-popup-toolbar">
+    <button class="btn-expand-all" title="Expand all">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      Expand all
+    </button>
+    <button class="btn-collapse-all" title="Collapse all">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg>
+      Collapse all
+    </button>
+  </div>`;
+}
+
+/** Toggle all tree nodes expanded or collapsed. */
+function toggleAllTreeNodes(collapse) {
+  const headers = popupOverlay.querySelectorAll(".var-tree-header");
+  const childrenEls = popupOverlay.querySelectorAll(".var-tree-children");
+  for (const h of headers) {
+    h.classList.toggle("collapsed", collapse);
+  }
+  for (const c of childrenEls) {
+    c.classList.toggle("collapsed", collapse);
+  }
 }
 
 /** Render an error message in the popup body. */
@@ -504,7 +544,7 @@ async function handleListAppendClick(btn) {
     // Re-render the entire tree with the updated data, preserving expansion state
     const body = popupOverlay.querySelector(".var-popup-body");
     if (body) {
-      body.innerHTML = `<div class="var-tree">${buildTreeNode(result.tree, [], 0, expandedPaths)}</div>`;
+      body.innerHTML = buildPopupToolbar() + `<div class="var-tree">${buildTreeNode(result.tree, [], 0, expandedPaths)}</div>`;
     }
 
     toast("Record added", "success");
@@ -572,7 +612,7 @@ async function handleListDeleteClick(btn) {
     // Re-render the entire tree with the updated data, preserving expansion state
     const body = popupOverlay.querySelector(".var-popup-body");
     if (body) {
-      body.innerHTML = `<div class="var-tree">${buildTreeNode(result.tree, [], 0, expandedPaths)}</div>`;
+      body.innerHTML = buildPopupToolbar() + `<div class="var-tree">${buildTreeNode(result.tree, [], 0, expandedPaths)}</div>`;
     }
 
     toast("Record deleted", "success");

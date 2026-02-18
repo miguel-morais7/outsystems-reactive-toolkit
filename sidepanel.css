@@ -1465,6 +1465,34 @@ body {
   flex: 1;
 }
 
+.var-popup-toolbar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.var-popup-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.var-popup-toolbar button:hover {
+  color: var(--color-red);
+  border-color: var(--color-red);
+  background: rgba(201, 42, 42, 0.05);
+}
+
 .var-popup-loading {
   display: flex;
   align-items: center;
