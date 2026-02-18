@@ -192,3 +192,69 @@ export function buildActionParamRow(param, methodName) {
     </div>
   </div>`;
 }
+
+/**
+ * Build an interactive aggregate item for the current screen.
+ * Shows the aggregate name, Run button, input variables (editable),
+ * and output parameters (with inspect popup for RecordList).
+ */
+export function buildAggregateItem(aggregate) {
+  const hasOutputs = aggregate.outputs && aggregate.outputs.length > 0;
+  const isExpanded = !!state.expandedAggregates[aggregate.refreshMethodName];
+
+  let html = `<div class="screen-action-item aggregate-item ${isExpanded ? "expanded" : ""}" data-refresh-method="${escAttr(aggregate.refreshMethodName)}">`;
+  html += `<div class="screen-action-header aggregate-header">`;
+  if (hasOutputs) {
+    html += `<svg class="screen-action-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+  }
+  html += `<span class="screen-detail-name">${esc(aggregate.name)}</span>`;
+  html += `<button class="btn-trigger-action btn-trigger-aggregate" data-refresh-method="${escAttr(aggregate.refreshMethodName)}" title="Refresh ${esc(aggregate.name)}">`;
+  html += `<svg class="action-play-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+  html += `<span class="action-btn-label">Run</span>`;
+  html += `</button>`;
+  html += `</div>`;
+
+  if (hasOutputs) {
+    html += `<div class="screen-action-body-wrap ${isExpanded ? "" : "collapsed"}">`;
+    html += `<div class="screen-action-body screen-action-inputs">`;
+    html += `<div class="screen-action-sub-header">Output</div>`;
+    for (const o of aggregate.outputs) {
+      html += buildAggregateOutputRow(o, aggregate.varAttrName);
+    }
+    html += `</div>`;
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+/**
+ * Build a single aggregate output parameter row.
+ * Reuses data-action-output CSS classes so existing event handlers apply.
+ */
+export function buildAggregateOutputRow(output, varAttrName) {
+  const valueControl = buildTypeControl({
+    dataType: output.dataType,
+    value: output.value,
+    identifier: output.attrName,
+    identifierAttr: "data-output-attr-name",
+    inputClass: "data-action-output-input",
+    toggleClass: "data-action-output-toggle",
+    name: output.name,
+    varAttrName,
+    extraAttrs: `data-var-attr-name="${escAttr(varAttrName)}"`,
+  });
+
+  return `<div class="screen-detail-item screen-var-row data-action-output-row"
+               data-output-attr-name="${escAttr(output.attrName)}"
+               data-var-attr-name="${escAttr(varAttrName)}">
+    <div class="screen-var-info">
+      <span class="screen-detail-name">${esc(output.name)}</span>
+      <span class="screen-detail-type">${esc(output.dataType)}</span>
+    </div>
+    <div class="screen-var-value-wrap">
+      ${valueControl}
+    </div>
+  </div>`;
+}

@@ -489,7 +489,7 @@ export async function fetchScreenDetails(baseUrl, moduleName, flow, screenName, 
       // Convert camelCase to readable: getProducts -> GetProducts
       name = name.charAt(0).toUpperCase() + name.slice(1);
       if (isAggregate) {
-        result.aggregates.push({ name });
+        result.aggregates.push({ name, refreshMethodName: rawName });
       } else if (isDataAction) {
         result.dataActions.push({ name, refreshMethodName: rawName });
       }
@@ -530,6 +530,39 @@ export async function fetchScreenDetails(baseUrl, moduleName, flow, screenName, 
     );
     const varMatch = varPattern.exec(varsRecordBody);
     da.varAttrName = varMatch ? varMatch[1] : null;
+  }
+
+  // ----------------------------------------------------------------
+  // Enrich Aggregates with output parameter metadata and variable attrName
+  // Standard aggregate output: AggregateRecord with listOut, countOut, dataFetchStatusAttr
+  // Also find the variable attrName from VariablesRecord (contains "Aggr")
+  // ----------------------------------------------------------------
+  for (const aggr of result.aggregates) {
+    const baseCamel = aggr.refreshMethodName.replace("$AggrRefresh", "");
+    // Match the AggrRec.attributesToDeclare block (case-insensitive on base name)
+    const recPattern = new RegExp(
+      baseCamel + "AggrRec\\.attributesToDeclare\\s*=\\s*function\\s*\\(\\)\\s*\\{[\\s\\S]*?return\\s*\\[([\\s\\S]*?)\\]\\.concat",
+      "i"
+    );
+    const recMatch = recPattern.exec(scriptText);
+    aggr.outputs = [];
+    if (recMatch) {
+      const attrsStr = recMatch[1];
+      const attrPattern = /this\.attr\s*\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*"[^"]*"\s*,\s*(?:true|false)\s*,\s*(?:true|false)\s*,\s*OS\.DataTypes\.DataTypes\.(\w+)/g;
+      let attrMatch;
+      while ((attrMatch = attrPattern.exec(attrsStr)) !== null) {
+        const rawType = attrMatch[3];
+        const dataType = TYPE_MAP_DA[rawType] || rawType;
+        aggr.outputs.push({ name: attrMatch[1], attrName: attrMatch[2], dataType });
+      }
+    }
+
+    // Find the variable attrName from VariablesRecord
+    const varPattern = new RegExp(
+      'this\\.attr\\s*\\(\\s*"' + aggr.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"\\s*,\\s*"([^"]+Aggr[^"]*)"'
+    );
+    const varMatch = varPattern.exec(varsRecordBody);
+    aggr.varAttrName = varMatch ? varMatch[1] : null;
   }
 
   // ----------------------------------------------------------------

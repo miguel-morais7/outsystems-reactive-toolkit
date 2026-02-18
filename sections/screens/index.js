@@ -10,7 +10,7 @@ import { initPopupListeners, openVarPopup, openActionParamPopup, openDataActionO
 import { state, inputSearch, screenList } from './state.js';
 import { render } from './render.js';
 import { doSetScreenVar, commitScreenVarInput, doSetDataActionOutput, commitDataActionOutputInput } from './editing.js';
-import { invokeScreenAction, refreshDataAction } from './actions.js';
+import { invokeScreenAction, refreshDataAction, refreshAggregate } from './actions.js';
 import { toggleScreenExpand } from './data.js';
 
 export { sectionEl, setData, getState } from './state.js';
@@ -75,6 +75,14 @@ export function init() {
       return;
     }
 
+    // Trigger aggregate refresh button
+    const aggrTriggerBtn = e.target.closest(".btn-trigger-aggregate");
+    if (aggrTriggerBtn) {
+      e.stopPropagation();
+      refreshAggregate(aggrTriggerBtn);
+      return;
+    }
+
     // Trigger data action refresh button
     const daTriggerBtn = e.target.closest(".btn-trigger-data-action");
     if (daTriggerBtn) {
@@ -88,6 +96,21 @@ export function init() {
     if (triggerBtn) {
       e.stopPropagation();
       invokeScreenAction(triggerBtn);
+      return;
+    }
+
+    // Aggregate header expand/collapse toggle
+    const aggrHeader = e.target.closest(".aggregate-header");
+    if (aggrHeader && !e.target.closest(".btn-trigger-aggregate")) {
+      e.stopPropagation();
+      const aggrItem = aggrHeader.closest(".aggregate-item");
+      if (aggrItem) {
+        const rm = aggrItem.dataset.refreshMethod;
+        state.expandedAggregates[rm] = !state.expandedAggregates[rm];
+        aggrItem.classList.toggle("expanded", !!state.expandedAggregates[rm]);
+        const body = aggrItem.querySelector(".screen-action-body-wrap");
+        if (body) body.classList.toggle("collapsed", !state.expandedAggregates[rm]);
+      }
       return;
     }
 
