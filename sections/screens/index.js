@@ -10,7 +10,7 @@ import { initPopupListeners, openVarPopup, openActionParamPopup, openDataActionO
 import { state, inputSearch, screenList } from './state.js';
 import { render } from './render.js';
 import { doSetScreenVar, commitScreenVarInput, doSetDataActionOutput, commitDataActionOutputInput } from './editing.js';
-import { invokeScreenAction, refreshDataAction, refreshAggregate } from './actions.js';
+import { invokeScreenAction, refreshDataAction, refreshAggregate, invokeServerAction } from './actions.js';
 import { toggleScreenExpand } from './data.js';
 
 export { sectionEl, setData, getState } from './state.js';
@@ -91,6 +91,14 @@ export function init() {
       return;
     }
 
+    // Trigger server action button
+    const serverTriggerBtn = e.target.closest(".btn-trigger-server-action");
+    if (serverTriggerBtn) {
+      e.stopPropagation();
+      invokeServerAction(serverTriggerBtn);
+      return;
+    }
+
     // Trigger screen action button
     const triggerBtn = e.target.closest(".btn-trigger-action");
     if (triggerBtn) {
@@ -125,6 +133,21 @@ export function init() {
         daItem.classList.toggle("expanded", !!state.expandedDataActions[rm]);
         const body = daItem.querySelector(".screen-action-body-wrap");
         if (body) body.classList.toggle("collapsed", !state.expandedDataActions[rm]);
+      }
+      return;
+    }
+
+    // Server action header expand/collapse toggle
+    const saHeader = e.target.closest(".server-action-header");
+    if (saHeader && !e.target.closest(".btn-trigger-server-action")) {
+      e.stopPropagation();
+      const saItem = saHeader.closest(".server-action-item");
+      if (saItem) {
+        const method = saItem.dataset.method;
+        state.expandedServerActions[method] = !state.expandedServerActions[method];
+        saItem.classList.toggle("expanded", !!state.expandedServerActions[method]);
+        const body = saItem.querySelector(".screen-action-body-wrap");
+        if (body) body.classList.toggle("collapsed", !state.expandedServerActions[method]);
       }
       return;
     }

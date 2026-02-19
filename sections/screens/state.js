@@ -17,6 +17,7 @@ export const state = {
   expandedActions: {},   // methodName -> true/false
   expandedDataActions: {},  // refreshMethodName -> true/false
   expandedAggregates: {},   // refreshMethodName -> true/false
+  expandedServerActions: {},  // methodName -> true/false
   collapsedSubSections: {},  // "screenUrl::sectionKey" -> true
 };
 

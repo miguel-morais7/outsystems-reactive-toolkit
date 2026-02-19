@@ -7,7 +7,7 @@
 import { sendMessage } from '../../utils/helpers.js';
 import { flashRow, toast } from '../../utils/ui.js';
 import { state } from './state.js';
-import { buildDataActionOutputRow, buildAggregateOutputRow } from './builders.js';
+import { buildDataActionOutputRow, buildAggregateOutputRow, buildServerActionOutputRow } from './builders.js';
 
 /**
  * Invoke a screen action via the trigger button.
@@ -212,6 +212,102 @@ export async function refreshAggregate(triggerBtn) {
 
     flashRow(actionItem, "saved");
     toast("Aggregate refreshed", "success");
+  } catch (err) {
+    flashRow(actionItem, "error");
+    toast(err.message, "error");
+  } finally {
+    triggerBtn.disabled = false;
+    if (label) label.textContent = origLabel;
+    triggerBtn.classList.remove("running");
+  }
+}
+
+/**
+ * Invoke a server action via the trigger button.
+ * Collects input param values and sends INVOKE_SERVER_ACTION.
+ * On success, updates output parameter rows with returned values.
+ */
+export async function invokeServerAction(triggerBtn) {
+  const methodName = triggerBtn.dataset.method;
+  const actionItem = triggerBtn.closest(".server-action-item");
+  if (!actionItem) return;
+
+  // Collect parameter values from the inputs section
+  const paramValues = [];
+  const inputsSection = actionItem.querySelector(".screen-action-inputs");
+  if (inputsSection) {
+    const paramRows = inputsSection.querySelectorAll(".screen-action-param-row");
+    paramRows.forEach(row => {
+      const input = row.querySelector(".action-param-input");
+      const toggle = row.querySelector(".action-param-toggle");
+      const popupBtn = row.querySelector(".btn-action-param-popup");
+
+      if (popupBtn) {
+        paramValues.push({
+          value: null,
+          dataType: popupBtn.dataset.type || "Record",
+          attrName: popupBtn.dataset.attrName,
+          isComplex: true,
+        });
+      } else if (input) {
+        paramValues.push({
+          value: input.value,
+          dataType: input.dataset.type || "Text",
+        });
+      } else if (toggle) {
+        paramValues.push({
+          value: toggle.classList.contains("active"),
+          dataType: "Boolean",
+        });
+      }
+    });
+  }
+
+  // Visual feedback: show loading state
+  triggerBtn.disabled = true;
+  const label = triggerBtn.querySelector(".action-btn-label");
+  const origLabel = label ? label.textContent : "";
+  if (label) label.textContent = "...";
+  triggerBtn.classList.add("running");
+
+  try {
+    const result = await sendMessage({
+      action: "INVOKE_SERVER_ACTION",
+      methodName,
+      paramValues,
+    });
+
+    if (!result || !result.ok) {
+      throw new Error(result?.error || "Server action failed.");
+    }
+
+    // Update output parameter rows with returned values
+    if (result.outputs && result.outputs.length > 0) {
+      // Update cached details
+      for (const screen of state.allScreens) {
+        if (screen.details?.serverActions) {
+          const sa = screen.details.serverActions.find(
+            s => s.methodName === methodName
+          );
+          if (sa) {
+            sa.outputs = result.outputs;
+          }
+        }
+      }
+
+      // Re-render the output rows in place
+      const outputsSection = actionItem.querySelector(".server-action-outputs");
+      if (outputsSection) {
+        let outputsHtml = `<div class="screen-action-sub-header">Output Parameters</div>`;
+        for (const o of result.outputs) {
+          outputsHtml += buildServerActionOutputRow(o);
+        }
+        outputsSection.innerHTML = outputsHtml;
+      }
+    }
+
+    flashRow(actionItem, "saved");
+    toast("Server action completed", "success");
   } catch (err) {
     flashRow(actionItem, "error");
     toast(err.message, "error");
