@@ -566,13 +566,63 @@ export async function fetchScreenDetails(baseUrl, moduleName, flow, screenName, 
   }
 
   // ----------------------------------------------------------------
-  // Parse Server Actions
-  // Pattern: Controller.prototype.actionName$ServerAction = function
+  // Parse Server Actions with input/output parameters
+  // Pattern: Controller.prototype.actionName$ServerAction = function (params..., callContext) { ... }
+  // Inputs:  ExternalName: OS.DataConversion.ServerDataConverter.to(paramVar, OS.DataTypes.DataTypes.TYPE)
+  // Outputs: registerVariableGroupType("...$Action{ActionName}", [{ name, attrName, dataType, ... }])
   // ----------------------------------------------------------------
-  const serverActionPattern = /Controller\.prototype\.(\w+)\$ServerAction\s*=/g;
-  while ((match = serverActionPattern.exec(scriptText)) !== null) {
-    const name = match[1].charAt(0).toUpperCase() + match[1].slice(1);
-    result.serverActions.push({ name });
+  const TYPE_MAP_SA = { DateTime: "Date Time", LongInteger: "Long Integer", PhoneNumber: "Phone Number" };
+  const serverActionFullPattern = /Controller\.prototype\.(\w+\$ServerAction)\s*=\s*function\s*\(([^)]*)\)\s*\{([\s\S]*?)\n\};/g;
+  while ((match = serverActionFullPattern.exec(scriptText)) !== null) {
+    const methodName = match[1];
+    const baseName = methodName.replace("$ServerAction", "");
+    const displayName = baseName.charAt(0).toUpperCase() + baseName.slice(1);
+    const sigParams = match[2].split(",").map(p => p.trim()).filter(p => p && p !== "callContext");
+    const body = match[3];
+
+    // Parse inputs from ServerDataConverter.to(paramVar, OS.DataTypes.DataTypes.TYPE)
+    const inputs = [];
+    const inputPattern = /(\w+)\s*:\s*OS\.DataConversion\.ServerDataConverter\.to\s*\(\s*(\w+)\s*,\s*OS\.DataTypes\.DataTypes\.(\w+)\s*\)/g;
+    let inputMatch;
+    while ((inputMatch = inputPattern.exec(body)) !== null) {
+      const rawType = inputMatch[3];
+      const dataType = TYPE_MAP_SA[rawType] || rawType;
+      inputs.push({ name: inputMatch[1], paramName: inputMatch[2], dataType });
+    }
+
+    // Fallback: if no ServerDataConverter pattern, derive from signature params
+    if (inputs.length === 0 && sigParams.length > 0) {
+      for (const p of sigParams) {
+        inputs.push({ name: p, paramName: p, dataType: "Text" });
+      }
+    }
+
+    // Parse outputs from registerVariableGroupType("...$Action{ActionName}", [...])
+    const outputs = [];
+    const outputGroupRe = new RegExp(
+      'Controller\\.registerVariableGroupType\\s*\\(\\s*"([^"]*\\$Action' +
+      displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+      ')"\\s*,\\s*\\[([\\s\\S]*?)\\]\\s*\\)',
+      'i'
+    );
+    const outputGroupMatch = outputGroupRe.exec(scriptText);
+    if (outputGroupMatch) {
+      const entriesStr = outputGroupMatch[2];
+      const outParamPattern = /name:\s*"([^"]+)"[\s\S]*?attrName:\s*"([^"]+)"[\s\S]*?mandatory:\s*(true|false)[\s\S]*?dataType:\s*OS\.DataTypes\.DataTypes\.(\w+)/g;
+      let outMatch;
+      while ((outMatch = outParamPattern.exec(entriesStr)) !== null) {
+        const rawType = outMatch[4];
+        const dataType = TYPE_MAP_SA[rawType] || rawType;
+        outputs.push({
+          name: outMatch[1],
+          attrName: outMatch[2],
+          dataType,
+          mandatory: outMatch[3] === "true",
+        });
+      }
+    }
+
+    result.serverActions.push({ name: displayName, methodName, inputs, outputs });
   }
 
   // ----------------------------------------------------------------

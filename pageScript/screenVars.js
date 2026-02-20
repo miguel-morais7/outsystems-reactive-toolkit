@@ -194,6 +194,11 @@ function _osScreenVarDeepSet(internalName, path, rawValue, dataType) {
     // Set via record .set() method if available, otherwise direct property assignment
     if (target && typeof target.set === "function" && !_isList(target)) {
       target.set(leafKey, coerced.value);
+      // Some ImmutableRecord variants are truly immutable (.set returns new instance).
+      // Fall back to direct ._ mutation if .set() didn't change the value in place.
+      if (target._ && target.get(leafKey) !== coerced.value) {
+        target._[leafKey] = coerced.value;
+      }
     } else {
       target[leafKey] = coerced.value;
     }

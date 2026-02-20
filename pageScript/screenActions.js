@@ -166,6 +166,8 @@ function _createDefaultComplexParam(ctrl, methodName, attrName) {
   try {
     var proto = Object.getPrototypeOf(ctrl);
     var internalFn = proto["_" + methodName];
+    // Fallback: server actions use the proxy method directly
+    if (typeof internalFn !== "function") internalFn = proto[methodName];
     if (typeof internalFn !== "function") return null;
 
     var src = internalFn.toString();

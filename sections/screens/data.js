@@ -56,6 +56,7 @@ export async function toggleScreenExpand(screenUrl, flow, screenName) {
         await enrichScreenActions(details);
         await enrichDataActions(details);
         await enrichAggregates(details);
+        await enrichServerActions(details);
       }
 
       // Store details directly on the screen object
@@ -256,5 +257,40 @@ async function enrichAggregates(details) {
     }
   } catch (e) {
     console.warn("[Screens] Failed to enrich aggregates:", e.message);
+  }
+}
+
+/**
+ * Enrich server actions with runtime metadata from the live controller.
+ * This provides accurate parameter type info from the actual runtime.
+ */
+async function enrichServerActions(details) {
+  if (!details.serverActions || details.serverActions.length === 0) return;
+
+  try {
+    const result = await sendMessage({ action: "GET_SERVER_ACTIONS" });
+    if (!result || !result.ok || !result.serverActions) return;
+
+    // Build a map of runtime server actions by normalized name
+    const runtimeMap = {};
+    for (const sa of result.serverActions) {
+      runtimeMap[sa.name.toLowerCase()] = sa;
+    }
+
+    // Merge runtime data into statically-parsed server actions
+    for (const sa of details.serverActions) {
+      const runtime = runtimeMap[sa.name.toLowerCase()];
+      if (runtime) {
+        sa.methodName = runtime.methodName;
+        if (runtime.inputs && runtime.inputs.length > 0) {
+          sa.inputs = runtime.inputs;
+        }
+        if (runtime.outputs && runtime.outputs.length > 0) {
+          sa.outputs = runtime.outputs;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[Screens] Failed to enrich server actions:", e.message);
   }
 }

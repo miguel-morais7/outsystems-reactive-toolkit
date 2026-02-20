@@ -64,6 +64,7 @@ async function ensurePageScriptInjected(tabId) {
         "pageScript/actionParams.js",
         "pageScript/dataActions.js",
         "pageScript/aggregates.js",
+        "pageScript/serverActions.js",
       ],
     });
   }
@@ -123,6 +124,8 @@ const PAGE_ACTIONS = {
   REFRESH_DATA_ACTION:       { func: (m) => _osDataActionRefresh(m),                                     args: msg => [msg.refreshMethodName] },
   GET_AGGREGATES:            { func: () => _osAggregatesGet(),                                            args: () => [] },
   REFRESH_AGGREGATE:         { func: (m) => _osAggregateRefresh(m),                                      args: msg => [msg.refreshMethodName] },
+  GET_SERVER_ACTIONS:        { func: () => _osServerActionsGet(),                                         args: () => [] },
+  INVOKE_SERVER_ACTION:      { func: (m, p) => _osServerActionInvoke(m, p),                              args: msg => [msg.methodName, msg.paramValues || []] },
 };
 
 /**

@@ -255,6 +255,22 @@ function _introspectValue(value, key, depth, maxListItems, typeHint) {
       }
     }
 
+    // ImmutableRecord without getters: data stored in record._, accessed via .get()
+    if (fields.length === 0 && value._ && typeof value._ === "object" && typeof value.get === "function") {
+      const internalKeys = Object.keys(value._);
+      for (const propName of internalKeys) {
+        if (seen.has(propName)) continue;
+        if (SKIP.has(propName)) continue;
+        seen.add(propName);
+        try {
+          const propVal = value.get(propName);
+          fields.push(_introspectValue(propVal, propName, depth + 1, maxListItems, attrTypes[propName]));
+        } catch (e) {
+          fields.push({ kind: "primitive", key: propName, value: "[error: " + e.message + "]", type: "error" });
+        }
+      }
+    }
+
     if (fields.length > 0) {
       return { kind: "record", key, fields };
     }
