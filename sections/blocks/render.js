@@ -12,15 +12,14 @@ import { state, inputSearch, blockList, blockCount, sectionEl } from './state.js
 
 /**
  * Find the live block entry that matches a parsed block.
- * Live matching: block.controllerModuleName === liveBlock.modulePath + ".mvc$controller"
+ * Tries exact modulePath match first, then falls back to suffix-matching
+ * the data-block DOM attribute against the block's mvcModuleName.
  */
 function findLiveBlock(block) {
+  const basePath = block.controllerModuleName.replace(/\.mvc\$controller$/, "");
   for (const lb of state.liveBlocks) {
-    // Match by modulePath: the parsed block's controllerModuleName is "Module.WebBlocks.Name.mvc$controller"
-    // and the live block's modulePath is "Module.WebBlocks.Name"
-    if (block.controllerModuleName === lb.modulePath + ".mvc$controller") {
-      return lb;
-    }
+    if (lb.modulePath && basePath === lb.modulePath) return lb;
+    if (lb.dataBlockAttr && (basePath === lb.dataBlockAttr || basePath.endsWith("." + lb.dataBlockAttr))) return lb;
   }
   return null;
 }

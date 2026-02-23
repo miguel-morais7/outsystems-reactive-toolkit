@@ -105,13 +105,24 @@ async function doScan() {
       const liveResult = await sendMessage({ action: "DISCOVER_BLOCKS" }).catch(() => null);
       const liveBlocks = (liveResult?.ok && liveResult.blocks) ? liveResult.blocks : [];
 
-      // Only show blocks that are actually live on this screen
+      // Only show blocks that are actually live on this screen.
+      // Match by exact modulePath first, then fall back to the data-block
+      // DOM attribute (e.g. "WebBlocks.PickzoneIdCombo") which is a suffix
+      // of the full module path.
       const liveModulePaths = new Set(
         liveBlocks.map(lb => lb.modulePath).filter(Boolean)
       );
+      const liveDataBlockAttrs = new Set(
+        liveBlocks.map(lb => lb.dataBlockAttr).filter(Boolean)
+      );
       const relevantBlocks = screenResult.blocks.filter(b => {
         const basePath = b.controllerModuleName.replace(/\.mvc\$controller$/, "");
-        return liveModulePaths.has(basePath);
+        if (liveModulePaths.has(basePath)) return true;
+        // Fallback: match if mvcModuleName ends with the data-block attribute
+        for (const attr of liveDataBlockAttrs) {
+          if (basePath === attr || basePath.endsWith("." + attr)) return true;
+        }
+        return false;
       });
 
       blocks.setData(

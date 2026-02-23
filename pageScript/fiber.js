@@ -232,7 +232,7 @@ function _discoverBlocks() {
       return { ok: true, blocks: [] };
     }
 
-    // Build a Set of view instances that live inside the screen content area
+    // Build a Map of view instance → data-block attribute from the content area
     var contentViews = _findContentAreaViewInstances();
 
     var blocks = [];
@@ -245,10 +245,15 @@ function _discoverBlocks() {
       var proto = Object.getPrototypeOf(ctrl);
       var modulePath = _extractModulePath(proto);
 
+      // data-block attribute (e.g. "WebBlocks.PickzoneIdCombo") serves as
+      // a fallback identifier when _extractModulePath cannot find the path.
+      var dataBlockAttr = contentViews ? (contentViews.get(entry.viewInstance) || "") : "";
+
       blocks.push({
         viewIndex: entry.viewIndex,
         depth: entry.depth,
         modulePath: modulePath,
+        dataBlockAttr: dataBlockAttr,
       });
     }
 
@@ -260,26 +265,27 @@ function _discoverBlocks() {
 
 /**
  * Find all view instances whose DOM block element ([data-block]) is inside
- * the screen's <main> content area.  Returns a Set of viewInstance objects,
- * or null when the content area cannot be located (caller should fall back
- * to showing all blocks).
+ * the screen's <main> content area.  Returns a Map of viewInstance →
+ * data-block attribute value, or null when the content area cannot be
+ * located (caller should fall back to showing all blocks).
  */
 function _findContentAreaViewInstances() {
   var contentArea = document.querySelector("main") || document.querySelector("[role='main']");
   if (!contentArea) return null;
 
   var blockEls = contentArea.querySelectorAll("[data-block]");
-  if (blockEls.length === 0) return new Set();
+  if (blockEls.length === 0) return new Map();
 
-  var views = new Set();
+  var views = new Map();
   for (var i = 0; i < blockEls.length; i++) {
+    var dataBlock = blockEls[i].getAttribute("data-block");
     var fiber = _getReactFiber(blockEls[i]);
     if (!fiber) continue;
     // Walk up the fiber tree to find the nearest View with model.variables
     var current = fiber;
     while (current) {
       if (_hasModelVariables(current.stateNode)) {
-        views.add(current.stateNode);
+        views.set(current.stateNode, dataBlock || "");
         break;
       }
       current = current.return;

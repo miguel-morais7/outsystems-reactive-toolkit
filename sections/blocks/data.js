@@ -16,10 +16,10 @@ import { render } from './render.js';
 function findLiveBlockById(blockId) {
   const block = state.allBlocks.find(b => b.fullName === blockId);
   if (!block) return null;
+  const basePath = block.controllerModuleName.replace(/\.mvc\$controller$/, "");
   for (const lb of state.liveBlocks) {
-    if (block.controllerModuleName === lb.modulePath + ".mvc$controller") {
-      return lb;
-    }
+    if (lb.modulePath && basePath === lb.modulePath) return lb;
+    if (lb.dataBlockAttr && (basePath === lb.dataBlockAttr || basePath.endsWith("." + lb.dataBlockAttr))) return lb;
   }
   return null;
 }
