@@ -78,11 +78,15 @@ async function executeInPage(func, args = []) {
   const tab = await getActiveTab();
   await ensurePageScriptInjected(tab.id);
 
+  // Chrome's executeScript requires JSON-serializable args; undefined is not.
+  // Convert undefined values to null (page scripts already handle null === undefined).
+  const safeArgs = args.map(a => a === undefined ? null : a);
+
   const results = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     world: "MAIN",
     func,
-    args,
+    args: safeArgs,
   });
 
   const data = extractScriptResult(results);
