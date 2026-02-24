@@ -54,13 +54,13 @@ function setButtonLoading(triggerBtn, loading) {
   if (loading) {
     triggerBtn.disabled = true;
     if (label) {
-      if (!triggerBtn._origLabel) triggerBtn._origLabel = label.textContent;
+      if (!triggerBtn.dataset.origLabel) triggerBtn.dataset.origLabel = label.textContent;
       label.textContent = "...";
     }
     triggerBtn.classList.add("running");
   } else {
     triggerBtn.disabled = false;
-    if (label) label.textContent = triggerBtn._origLabel || "Run";
+    if (label) label.textContent = triggerBtn.dataset.origLabel || "Run";
     triggerBtn.classList.remove("running");
   }
 }

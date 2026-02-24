@@ -66,6 +66,10 @@ async function doScan() {
       sendMessage({ action: "FETCH_ROLES" }).catch(() => null),
     ]);
 
+    // Kick off block discovery in parallel with screen/variable data processing.
+    // This page script call runs concurrently while we render screens, variables, etc.
+    const liveBlocksPromise = sendMessage({ action: "DISCOVER_BLOCKS" }).catch(() => null);
+
     if (!result || !result.ok) {
       throw new Error(result?.error || "Unknown error during scan.");
     }
@@ -101,8 +105,9 @@ async function doScan() {
 
     // Blocks — discover live blocks from the fiber tree, then keep only
     // the static entries that have a live match on the current screen.
+    // liveBlocksPromise was kicked off in parallel above.
     if (screenResult?.ok && screenResult.blocks && screenResult.blocks.length > 0) {
-      const liveResult = await sendMessage({ action: "DISCOVER_BLOCKS" }).catch(() => null);
+      const liveResult = await liveBlocksPromise;
       const liveBlocks = (liveResult?.ok && liveResult.blocks) ? liveResult.blocks : [];
 
       // Only show blocks that are actually live on this screen.

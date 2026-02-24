@@ -152,29 +152,30 @@ function _findAllViewInstances() {
  *
  * React fiber trees use .child for the first child and .sibling for the
  * next sibling at the same level.  We recurse on .child (depth + 1) and
- * tail-recurse on .sibling (same depth, same parent) to avoid
- * double-visiting nodes.
+ * iterate over .sibling (same depth, same parent) to avoid stack overflow
+ * on wide sibling chains.
  */
 function _dfsCollectAllViews(fiber, results, depth, parentViewIndex) {
-  if (!fiber) return;
+  var current = fiber;
+  while (current) {
+    var currentParent = parentViewIndex;
 
-  var currentParent = parentViewIndex;
+    if (_hasModelVariables(current.stateNode)) {
+      var thisIndex = results.length;
+      results.push({
+        viewInstance: current.stateNode,
+        viewIndex: thisIndex,
+        depth: depth,
+        parentViewIndex: parentViewIndex,
+      });
+      currentParent = thisIndex;
+    }
 
-  if (_hasModelVariables(fiber.stateNode)) {
-    var thisIndex = results.length;
-    results.push({
-      viewInstance: fiber.stateNode,
-      viewIndex: thisIndex,
-      depth: depth,
-      parentViewIndex: parentViewIndex,
-    });
-    currentParent = thisIndex;
+    // Children inherit current viewInstance as parent (one level deeper)
+    _dfsCollectAllViews(current.child, results, depth + 1, currentParent);
+    // Iterate siblings at the same depth (share the original parentViewIndex)
+    current = current.sibling;
   }
-
-  // Children inherit current viewInstance as parent (one level deeper)
-  _dfsCollectAllViews(fiber.child, results, depth + 1, currentParent);
-  // Siblings are at the same depth and share this fiber's original parent
-  _dfsCollectAllViews(fiber.sibling, results, depth, parentViewIndex);
 }
 
 /**
@@ -216,18 +217,36 @@ function _findAllViewInstancesByDOMSearch() {
  * When viewIndex is undefined/null/0, falls back to _findCurrentScreenViewInstance()
  * for backward compatibility.
  *
- * NOTE: viewIndex is assigned by DFS traversal order, so it can shift if
- * the fiber tree changes (e.g. conditional block render/unrender) between
- * discovery and a later operation.  A future improvement could use
- * modulePath as a stable secondary key for verification/fallback.
+ * When a modulePath hint is provided (optional second argument), the function
+ * verifies that the view instance at the requested index still matches.
+ * If the fiber tree has shifted (e.g. conditional block render/unrender),
+ * it falls back to scanning all instances for a modulePath match.
  */
-function _findViewInstanceByIndex(viewIndex) {
+function _findViewInstanceByIndex(viewIndex, expectedModulePath) {
   if (viewIndex === undefined || viewIndex === null || viewIndex === 0) {
     return _findCurrentScreenViewInstance();
   }
   var all = _findAllViewInstances();
+  var candidate = null;
   for (var i = 0; i < all.length; i++) {
-    if (all[i].viewIndex === viewIndex) return all[i].viewInstance;
+    if (all[i].viewIndex === viewIndex) { candidate = all[i].viewInstance; break; }
+  }
+
+  // If no modulePath hint, return whatever we found at that index
+  if (!expectedModulePath) return candidate;
+
+  // Verify the candidate's modulePath still matches
+  if (candidate) {
+    var proto = Object.getPrototypeOf(candidate.controller);
+    var actualPath = _extractModulePath(proto);
+    if (actualPath === expectedModulePath) return candidate;
+  }
+
+  // Fallback: the tree shifted — search all instances by modulePath
+  for (var j = 0; j < all.length; j++) {
+    var inst = all[j].viewInstance;
+    var p = Object.getPrototypeOf(inst.controller);
+    if (_extractModulePath(p) === expectedModulePath) return inst;
   }
   return null;
 }
@@ -369,24 +388,25 @@ function _extractModulePath(proto) {
 /**
  * Fallback: search the DOM for elements with React fiber properties,
  * then walk each fiber tree to find the View instance.
+ * Uses _hasModelVariables() for consistent try/catch-guarded checking.
  */
 function _findViewInstanceByDOMSearch() {
   // Try common OutSystems root selectors
-  const candidates = document.querySelectorAll("div[data-block], div[class*='screen'], #renderContainerId, body > div");
+  var candidates = document.querySelectorAll("div[data-block], div[class*='screen'], #renderContainerId, body > div");
 
-  for (const el of candidates) {
-    const fiber = _getReactFiber(el);
+  for (var i = 0; i < candidates.length; i++) {
+    var fiber = _getReactFiber(candidates[i]);
     if (fiber) {
-      const result = _walkFiberForView(fiber);
+      var result = _walkFiberForView(fiber);
       if (result) return result;
     }
   }
 
   // Last resort: walk all direct children of body
-  for (const el of document.body.children) {
-    const fiber = _getReactFiber(el);
+  for (var j = 0; j < document.body.children.length; j++) {
+    var fiber = _getReactFiber(document.body.children[j]);
     if (fiber) {
-      const result = _walkFiberForView(fiber);
+      var result = _walkFiberForView(fiber);
       if (result) return result;
     }
   }

@@ -44,6 +44,20 @@ export function setData(blocks, baseUrl, modName, liveBlocks) {
   state.collapsedBlockGroups = {};
 }
 
+/**
+ * Find the live block entry that matches a parsed block.
+ * Tries exact modulePath match first, then falls back to suffix-matching
+ * the data-block DOM attribute against the block's controllerModuleName.
+ */
+export function findLiveBlock(block) {
+  const basePath = block.controllerModuleName.replace(/\.mvc\$controller$/, "");
+  for (const lb of state.liveBlocks) {
+    if (lb.modulePath && basePath === lb.modulePath) return lb;
+    if (lb.dataBlockAttr && (basePath === lb.dataBlockAttr || basePath.endsWith("." + lb.dataBlockAttr))) return lb;
+  }
+  return null;
+}
+
 /** Return counts for the status-bar summary. */
 export function getState() {
   return { count: state.allBlocks.length };

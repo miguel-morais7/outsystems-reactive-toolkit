@@ -8,21 +8,7 @@
 import { esc, escAttr } from '../../utils/helpers.js';
 import { show, hide } from '../../utils/ui.js';
 import { buildDetails } from '../shared/render.js';
-import { state, inputSearch, blockList, blockCount, sectionEl } from './state.js';
-
-/**
- * Find the live block entry that matches a parsed block.
- * Tries exact modulePath match first, then falls back to suffix-matching
- * the data-block DOM attribute against the block's mvcModuleName.
- */
-function findLiveBlock(block) {
-  const basePath = block.controllerModuleName.replace(/\.mvc\$controller$/, "");
-  for (const lb of state.liveBlocks) {
-    if (lb.modulePath && basePath === lb.modulePath) return lb;
-    if (lb.dataBlockAttr && (basePath === lb.dataBlockAttr || basePath.endsWith("." + lb.dataBlockAttr))) return lb;
-  }
-  return null;
-}
+import { state, findLiveBlock, inputSearch, blockList, blockCount, sectionEl } from './state.js';
 
 /** Render (or re-render) the blocks list. */
 export function render() {

@@ -7,22 +7,8 @@
 
 import { sendMessage } from '../../utils/helpers.js';
 import { fetchLiveValues, enrichScreenActions, enrichDataActions, enrichAggregates, enrichServerActions } from '../shared/enrichment.js';
-import { state } from './state.js';
+import { state, findLiveBlock } from './state.js';
 import { render } from './render.js';
-
-/**
- * Find the live block entry that matches a parsed block by blockId.
- */
-function findLiveBlockById(blockId) {
-  const block = state.allBlocks.find(b => b.fullName === blockId);
-  if (!block) return null;
-  const basePath = block.controllerModuleName.replace(/\.mvc\$controller$/, "");
-  for (const lb of state.liveBlocks) {
-    if (lb.modulePath && basePath === lb.modulePath) return lb;
-    if (lb.dataBlockAttr && (basePath === lb.dataBlockAttr || basePath.endsWith("." + lb.dataBlockAttr))) return lb;
-  }
-  return null;
-}
 
 export async function toggleBlockExpand(blockId, controllerModuleName) {
   // Toggle expansion
@@ -38,7 +24,8 @@ export async function toggleBlockExpand(blockId, controllerModuleName) {
     return;
   }
 
-  const liveBlock = findLiveBlockById(blockId);
+  const block = state.allBlocks.find(b => b.fullName === blockId);
+  const liveBlock = block ? findLiveBlock(block) : null;
   const isLive = !!liveBlock;
 
   // Always fetch fresh details when expanding
