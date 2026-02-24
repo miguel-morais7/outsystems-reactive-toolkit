@@ -18,6 +18,7 @@ import * as appmetadata from './sections/appmetadata.js';
 import * as variables from './sections/variables.js';
 import * as producers from './sections/producers.js';
 import * as screens from './sections/screens/index.js';
+import * as blocks from './sections/blocks/index.js';
 import * as roles from './sections/roles.js';
 import * as staticEntities from './sections/staticEntities.js';
 
@@ -25,7 +26,7 @@ import * as staticEntities from './sections/staticEntities.js';
 /*  Section registry                                                   */
 /*  Add new sections here — showLoading / showEmptyState pick them up  */
 /* ================================================================== */
-const sections = [appmetadata, variables, screens, staticEntities, roles, producers];
+const sections = [appmetadata, variables, screens, blocks, staticEntities, roles, producers];
 
 /* ================================================================== */
 /*  DOM references (orchestrator-level only)                           */
@@ -65,6 +66,10 @@ async function doScan() {
       sendMessage({ action: "FETCH_ROLES" }).catch(() => null),
     ]);
 
+    // Kick off block discovery in parallel with screen/variable data processing.
+    // This page script call runs concurrently while we render screens, variables, etc.
+    const liveBlocksPromise = sendMessage({ action: "DISCOVER_BLOCKS" }).catch(() => null);
+
     if (!result || !result.ok) {
       throw new Error(result?.error || "Unknown error during scan.");
     }
@@ -96,6 +101,45 @@ async function doScan() {
     } else {
       screens.setData([], "", "", "", "");
       hide(screens.sectionEl);
+    }
+
+    // Blocks — discover live blocks from the fiber tree, then keep only
+    // the static entries that have a live match on the current screen.
+    // liveBlocksPromise was kicked off in parallel above.
+    if (screenResult?.ok && screenResult.blocks && screenResult.blocks.length > 0) {
+      const liveResult = await liveBlocksPromise;
+      const liveBlocks = (liveResult?.ok && liveResult.blocks) ? liveResult.blocks : [];
+
+      // Only show blocks that are actually live on this screen.
+      // Match by exact modulePath first, then fall back to the data-block
+      // DOM attribute (e.g. "WebBlocks.PickzoneIdCombo") which is a suffix
+      // of the full module path.
+      const liveModulePaths = new Set(
+        liveBlocks.map(lb => lb.modulePath).filter(Boolean)
+      );
+      const liveDataBlockAttrs = new Set(
+        liveBlocks.map(lb => lb.dataBlockAttr).filter(Boolean)
+      );
+      const relevantBlocks = screenResult.blocks.filter(b => {
+        const basePath = b.controllerModuleName.replace(/\.mvc\$controller$/, "");
+        if (liveModulePaths.has(basePath)) return true;
+        // Fallback: match if mvcModuleName ends with the data-block attribute
+        for (const attr of liveDataBlockAttrs) {
+          if (basePath === attr || basePath.endsWith("." + attr)) return true;
+        }
+        return false;
+      });
+
+      blocks.setData(
+        relevantBlocks,
+        screenResult.baseUrl || "",
+        screenResult.moduleName || "",
+        liveBlocks
+      );
+      blocks.render();
+    } else {
+      blocks.setData([], "", "", []);
+      hide(blocks.sectionEl);
     }
 
     // Static Entities
@@ -136,6 +180,7 @@ async function doScan() {
     const varState = variables.getState();
     const prodState = producers.getState();
     const scrState = screens.getState();
+    const blkState = blocks.getState();
     const seState = staticEntities.getState();
     const rolesState = roles.getState();
 
@@ -148,6 +193,10 @@ async function doScan() {
     if (scrState.count > 0) {
       const scrText = scrState.count === 1 ? "screen" : "screens";
       parts.push(`${scrState.count} ${scrText}`);
+    }
+    if (blkState.count > 0) {
+      const blkText = blkState.count === 1 ? "block" : "blocks";
+      parts.push(`${blkState.count} ${blkText}`);
     }
     if (seState.count > 0) {
       const seText = seState.count === 1 ? "static entity" : "static entities";
