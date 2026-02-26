@@ -67,9 +67,15 @@ async function doScan() {
       sendMessage({ action: "FETCH_ROLES" }).catch(() => null),
     ]);
 
-    // Kick off block discovery in parallel with screen/variable data processing.
-    // This page script call runs concurrently while we render screens, variables, etc.
+    // Kick off block discovery and user-role checking in parallel.
+    // Both are async page script calls that run concurrently while we
+    // render the synchronous sections below.
     const liveBlocksPromise = sendMessage({ action: "DISCOVER_BLOCKS" }).catch(() => null);
+
+    const rolesList = (rolesResult && rolesResult.ok) ? (rolesResult.roles || []) : [];
+    const userRolesPromise = (rolesList.length > 0 && rolesList[0].roleKey)
+      ? sendMessage({ action: "CHECK_USER_ROLES", roles: rolesList }).catch(() => null)
+      : Promise.resolve(null);
 
     if (!result || !result.ok) {
       throw new Error(result?.error || "Unknown error during scan.");
@@ -104,11 +110,12 @@ async function doScan() {
       hide(screens.sectionEl);
     }
 
+    // Await both async operations that were kicked off in parallel above.
+    const [liveResult, userRolesResult] = await Promise.all([liveBlocksPromise, userRolesPromise]);
+
     // Blocks — discover live blocks from the fiber tree, then keep only
     // the static entries that have a live match on the current screen.
-    // liveBlocksPromise was kicked off in parallel above.
     if (screenResult?.ok && screenResult.blocks && screenResult.blocks.length > 0) {
-      const liveResult = await liveBlocksPromise;
       const liveBlocks = (liveResult?.ok && liveResult.blocks) ? liveResult.blocks : [];
 
       // Only show blocks that are actually live on this screen.
@@ -165,14 +172,9 @@ async function doScan() {
 
     // Roles
     if (rolesResult && rolesResult.ok) {
-      const rolesList = rolesResult.roles || [];
-      // Check which roles the current user has (requires roleKey from parsers)
-      if (rolesList.length > 0 && rolesList[0].roleKey) {
-        const userRolesResult = await sendMessage({ action: "CHECK_USER_ROLES", roles: rolesList }).catch(() => null);
-        if (userRolesResult && userRolesResult.ok) {
-          for (const role of rolesList) {
-            role.userHasRole = !!userRolesResult.userRoles[role.name];
-          }
+      if (userRolesResult && userRolesResult.ok) {
+        for (const role of rolesList) {
+          role.userHasRole = !!userRolesResult.userRoles[role.name];
         }
       }
       roles.setData(rolesList);

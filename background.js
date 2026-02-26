@@ -37,14 +37,49 @@ function extractScriptResult(results) {
   return results[0].result;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Page script injection (cached per tab)                             */
+/* ------------------------------------------------------------------ */
+
+/** Tabs where page scripts have been successfully injected. */
+const injectedTabs = new Set();
+
 /**
- * Inject pageScript helpers into the page (idempotent — we check
- * whether _osClientVarsScan is already defined).
+ * In-flight injection promises, keyed by tabId.
+ * Prevents duplicate concurrent injections when multiple executeInPage
+ * calls race on the same tab (e.g. 5 parallel enrichment calls).
+ */
+const pendingInjections = new Map();
+
+/**
+ * Ensure page scripts are injected into the given tab.
  *
- * Files are injected in dependency order: helpers and fiber first,
- * then feature modules that depend on them.
+ * After the first successful injection the tab is cached so subsequent
+ * calls return immediately.  Concurrent calls for the same tab share a
+ * single injection promise.
+ *
+ * Cache is cleared on tab removal and page navigation (scripts are lost
+ * when the page reloads).  Service-worker restart naturally empties the
+ * in-memory Set.
  */
 async function ensurePageScriptInjected(tabId) {
+  if (injectedTabs.has(tabId)) return;
+
+  if (pendingInjections.has(tabId)) {
+    return pendingInjections.get(tabId);
+  }
+
+  const promise = doInjection(tabId);
+  pendingInjections.set(tabId, promise);
+
+  try {
+    await promise;
+  } finally {
+    pendingInjections.delete(tabId);
+  }
+}
+
+async function doInjection(tabId) {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     world: "MAIN",
@@ -68,6 +103,8 @@ async function ensurePageScriptInjected(tabId) {
       ],
     });
   }
+
+  injectedTabs.add(tabId);
 }
 
 /**
@@ -184,10 +221,21 @@ async function handleNavigate(url) {
 /*  Re-scan on tab navigation / refresh                                */
 /* ------------------------------------------------------------------ */
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // Clear injection cache early — scripts are lost when the page reloads.
+  if (changeInfo.status === "loading") {
+    injectedTabs.delete(tabId);
+    pendingInjections.delete(tabId);
+  }
+
   if (changeInfo.status === "complete" && tab.active) {
     // Notify the side panel so it can re-scan automatically
     chrome.runtime.sendMessage({ action: "TAB_UPDATED", tabId }).catch(() => {
       // Side panel may not be open — ignore
     });
   }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  injectedTabs.delete(tabId);
+  pendingInjections.delete(tabId);
 });
