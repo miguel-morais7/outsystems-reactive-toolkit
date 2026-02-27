@@ -35,13 +35,9 @@ export function init() {
   // No event listeners — this section is purely read-only
 }
 
-/** Set the detected platform type ('reactive', 'odc', or 'unknown'). */
-export function setPlatform(p) {
-  platform = p || "unknown";
-}
-
 /** Replace section data after a scan. */
-export function setData(appDef) {
+export function setData(appDef, platformType) {
+  platform = platformType || "unknown";
   if (!appDef) {
     metadataEntries = [];
     versionInfo = null;

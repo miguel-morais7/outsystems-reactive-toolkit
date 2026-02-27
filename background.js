@@ -217,7 +217,6 @@ const SPECIAL_ACTIONS = {
   FETCH_SCREEN_DETAILS: msg => fetchScreenDetails(msg.baseUrl, msg.moduleName, msg.flow, msg.screenName, msg.controllerModuleName),
   FETCH_BLOCK_DETAILS:  msg => fetchScreenDetails(msg.baseUrl, msg.moduleName, null, null, msg.controllerModuleName),
   NAVIGATE:             msg => handleNavigate(msg.url),
-  DETECT_PLATFORM:      () => getActiveTab().then(tab => ({ ok: true, platform: tabPlatform.get(tab.id) || "unknown" })),
 };
 
 /* ------------------------------------------------------------------ */
@@ -233,8 +232,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .then(async (data) => {
         // Enrich SCAN response with detected platform type
         if (action === "SCAN" && data && data.ok) {
-          const tab = await getActiveTab();
-          data.platform = tabPlatform.get(tab.id) || "unknown";
+          try {
+            const tab = await getActiveTab();
+            data.platform = tabPlatform.get(tab.id) || "unknown";
+          } catch {
+            data.platform = "unknown";
+          }
         }
         sendResponse(data);
       })
