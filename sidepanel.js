@@ -83,6 +83,7 @@ async function doScan() {
     }
 
     // Feed data into section modules
+    appmetadata.setPlatform(result.platform || "unknown");
     appmetadata.setData(result.appDefinition || null);
     appmetadata.render();
 
