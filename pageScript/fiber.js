@@ -347,15 +347,28 @@ function _osDiscoverBlocks() {
 
 /**
  * Find all view instances whose DOM block element ([data-block]) is inside
- * the screen's <main> content area.  Returns a Map of viewInstance →
- * data-block attribute value, or null when the content area cannot be
- * located (caller should fall back to showing all blocks).
+ * the screen's <main> content area or inside an open popup dialog.
+ * Returns a Map of viewInstance → data-block attribute value, or null when
+ * neither the content area nor any popup dialogs can be located (caller
+ * should fall back to showing all blocks).
  */
 function _findContentAreaViewInstances() {
   var contentArea = document.querySelector("main") || document.querySelector("[role='main']");
-  if (!contentArea) return null;
+  var popupDialogs = document.querySelectorAll(".popup-dialog");
 
-  var blockEls = contentArea.querySelectorAll("[data-block]");
+  if (!contentArea && popupDialogs.length === 0) return null;
+
+  // Collect [data-block] elements from content area and open popups
+  var blockEls = [];
+  if (contentArea) {
+    var contentBlocks = contentArea.querySelectorAll("[data-block]");
+    for (var c = 0; c < contentBlocks.length; c++) blockEls.push(contentBlocks[c]);
+  }
+  for (var p = 0; p < popupDialogs.length; p++) {
+    var popupBlocks = popupDialogs[p].querySelectorAll("[data-block]");
+    for (var pb = 0; pb < popupBlocks.length; pb++) blockEls.push(popupBlocks[pb]);
+  }
+
   if (blockEls.length === 0) return new Map();
 
   var views = new Map();
