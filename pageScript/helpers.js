@@ -182,12 +182,20 @@ function _introspectValue(value, key, depth, maxListItems, typeHint) {
   if (typeof value === "object" && value !== null &&
       typeof value.toString === "function" && typeof value.valueOf === "function") {
     // Named constructor check (non-minified builds)
-    if (value.constructor && /^(Decimal|Currency|Long Integer)/.test(value.constructor.name || "")) {
+    // ODC uses "LongInteger" (no space), Reactive uses "Long Integer" (with space)
+    if (value.constructor && /^(Decimal|Currency|Long ?Integer)/.test(value.constructor.name || "")) {
+      var displayType = typeHint || value.constructor.name.replace("LongInteger", "Long Integer");
       try {
-        return { kind: "primitive", key, value: Number(value), type: typeHint || value.constructor.name };
+        return { kind: "primitive", key, value: Number(value), type: displayType };
       } catch (e) {
-        return { kind: "primitive", key, value: String(value), type: typeHint || "number" };
+        return { kind: "primitive", key, value: String(value), type: displayType };
       }
+    }
+    // Fallback: ODC numeric wrappers with toNumber() (e.g. LongInteger with minified name)
+    if (typeof value.toNumber === "function") {
+      try {
+        return { kind: "primitive", key, value: value.toNumber(), type: typeHint || "Long Integer" };
+      } catch (_) { /* fall through */ }
     }
   }
 
@@ -521,10 +529,29 @@ function _detectOsType(value) {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Cache of ODC wrapper constructors discovered from runtime values.
+ * Keyed by varType string (e.g. "Long Integer", "Decimal", "Date").
+ */
+var _wrapperCtorCache = {};
+
+/**
+ * Resolve the ODC wrapper constructor for a given varType, either from the
+ * current runtime value or from the cache. Returns null if not available.
+ */
+function _resolveWrapperCtor(varType, currentValue, excludeCtor) {
+  if (currentValue && typeof currentValue === "object" && currentValue.constructor
+      && currentValue.constructor !== excludeCtor && currentValue.constructor !== Object) {
+    _wrapperCtorCache[varType] = currentValue.constructor;
+    return currentValue.constructor;
+  }
+  return _wrapperCtorCache[varType] || null;
+}
+
+/**
  * Coerce a raw string value (from the UI) into the appropriate JS type
  * before calling the OutSystems setter.
  */
-function _coerceValue(raw, varType) {
+function _coerceValue(raw, varType, currentValue) {
   switch (varType) {
     case "Boolean":
       if (typeof raw === "boolean") return { value: raw };
@@ -537,11 +564,11 @@ function _coerceValue(raw, varType) {
     case "Long Integer":
     case "Decimal":
     case "Currency":
-      return _coerceNumericValue(raw, varType);
+      return _coerceNumericValue(raw, varType, currentValue);
     case "Date":
     case "Time":
     case "Date Time":
-      return _coerceDateValue(raw, varType);
+      return _coerceDateValue(raw, varType, currentValue);
     default:
       return { value: String(raw) };
   }
@@ -551,7 +578,7 @@ function _coerceValue(raw, varType) {
  * Convert a raw numeric string into the OS-internal representation for
  * Currency, Decimal, and Long Integer types.
  */
-function _coerceNumericValue(raw, varType) {
+function _coerceNumericValue(raw, varType, currentValue) {
   // Validate it looks like a number first
   const parsed = varType === "Long Integer" ? parseInt(raw, 10) : parseFloat(raw);
   if (isNaN(parsed)) return { error: "Invalid number: " + raw };
@@ -569,6 +596,14 @@ function _coerceNumericValue(raw, varType) {
       if (converted !== undefined && converted !== null) {
         return { value: converted };
       }
+    } catch (e) { /* fall through */ }
+  }
+
+  // ODC: construct wrapper from the current value's constructor (or cached)
+  var wrapCtor = _resolveWrapperCtor(varType, currentValue, Number);
+  if (wrapCtor) {
+    try {
+      return { value: new wrapCtor(parsed) };
     } catch (e) { /* fall through to plain number */ }
   }
 
@@ -579,7 +614,7 @@ function _coerceNumericValue(raw, varType) {
  * Convert a raw date/time string from the HTML input into the value
  * expected by the OutSystems clientVarsService.setVariable().
  */
-function _coerceDateValue(raw, varType) {
+function _coerceDateValue(raw, varType, currentValue) {
   // --- Attempt 1: OutSystems ServerDataConverter.from() -----------------
   const OS = window.__osRuntime;
   if (OS && OS.DataConversion && OS.DataConversion.ServerDataConverter) {
@@ -609,27 +644,33 @@ function _coerceDateValue(raw, varType) {
   }
 
   // --- Attempt 2: construct Date with numeric components ----------------
+  var d;
   if (varType === "Date") {
     const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if (!m) return { error: "Invalid date: " + raw };
-    const d = new Date(+m[1], +m[2] - 1, +m[3]);
+    d = new Date(+m[1], +m[2] - 1, +m[3]);
     if (isNaN(d.getTime())) return { error: "Invalid date: " + raw };
-    return { value: d };
-  }
-
-  if (varType === "Time") {
+  } else if (varType === "Time") {
     const m = raw.match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
     if (!m) return { error: "Invalid time: " + raw };
-    const d = new Date(1900, 0, 1, +m[1], +m[2], m[3] ? +m[3] : 0);
+    d = new Date(1900, 0, 1, +m[1], +m[2], m[3] ? +m[3] : 0);
     if (isNaN(d.getTime())) return { error: "Invalid time: " + raw };
-    return { value: d };
+  } else {
+    // Date Time
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (!m) return { error: "Invalid date/time: " + raw };
+    d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], m[6] ? +m[6] : 0);
+    if (isNaN(d.getTime())) return { error: "Invalid date/time: " + raw };
   }
 
-  // Date Time
-  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
-  if (!m) return { error: "Invalid date/time: " + raw };
-  const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], m[6] ? +m[6] : 0);
-  if (isNaN(d.getTime())) return { error: "Invalid date/time: " + raw };
+  // ODC: wrap in DateTime constructor from the current value (or cached)
+  var wrapCtor = _resolveWrapperCtor(varType, currentValue, Date);
+  if (wrapCtor) {
+    try {
+      return { value: new wrapCtor(d) };
+    } catch (e) { /* fall through to plain Date */ }
+  }
+
   return { value: d };
 }
 
