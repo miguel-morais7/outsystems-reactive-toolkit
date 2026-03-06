@@ -535,6 +535,19 @@ function _detectOsType(value) {
 var _wrapperCtorCache = {};
 
 /**
+ * Resolve the ODC wrapper constructor for a given varType, either from the
+ * current runtime value or from the cache. Returns null if not available.
+ */
+function _resolveWrapperCtor(varType, currentValue, excludeCtor) {
+  if (currentValue && typeof currentValue === "object" && currentValue.constructor
+      && currentValue.constructor !== excludeCtor && currentValue.constructor !== Object) {
+    _wrapperCtorCache[varType] = currentValue.constructor;
+    return currentValue.constructor;
+  }
+  return _wrapperCtorCache[varType] || null;
+}
+
+/**
  * Coerce a raw string value (from the UI) into the appropriate JS type
  * before calling the OutSystems setter.
  */
@@ -587,14 +600,7 @@ function _coerceNumericValue(raw, varType, currentValue) {
   }
 
   // ODC: construct wrapper from the current value's constructor (or cached)
-  var wrapCtor = null;
-  if (currentValue && typeof currentValue === "object" && currentValue.constructor
-      && currentValue.constructor !== Number && currentValue.constructor !== Object) {
-    wrapCtor = currentValue.constructor;
-    _wrapperCtorCache[varType] = wrapCtor;
-  } else if (_wrapperCtorCache[varType]) {
-    wrapCtor = _wrapperCtorCache[varType];
-  }
+  var wrapCtor = _resolveWrapperCtor(varType, currentValue, Number);
   if (wrapCtor) {
     try {
       return { value: new wrapCtor(parsed) };
@@ -658,14 +664,7 @@ function _coerceDateValue(raw, varType, currentValue) {
   }
 
   // ODC: wrap in DateTime constructor from the current value (or cached)
-  var wrapCtor = null;
-  if (currentValue && typeof currentValue === "object" && currentValue.constructor
-      && currentValue.constructor !== Date) {
-    wrapCtor = currentValue.constructor;
-    _wrapperCtorCache[varType] = wrapCtor;
-  } else if (_wrapperCtorCache[varType]) {
-    wrapCtor = _wrapperCtorCache[varType];
-  }
+  var wrapCtor = _resolveWrapperCtor(varType, currentValue, Date);
   if (wrapCtor) {
     try {
       return { value: new wrapCtor(d) };
