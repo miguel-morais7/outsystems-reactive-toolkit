@@ -182,12 +182,20 @@ function _introspectValue(value, key, depth, maxListItems, typeHint) {
   if (typeof value === "object" && value !== null &&
       typeof value.toString === "function" && typeof value.valueOf === "function") {
     // Named constructor check (non-minified builds)
-    if (value.constructor && /^(Decimal|Currency|Long Integer)/.test(value.constructor.name || "")) {
+    // ODC uses "LongInteger" (no space), Reactive uses "Long Integer" (with space)
+    if (value.constructor && /^(Decimal|Currency|Long ?Integer)/.test(value.constructor.name || "")) {
+      var displayType = typeHint || value.constructor.name.replace("LongInteger", "Long Integer");
       try {
-        return { kind: "primitive", key, value: Number(value), type: typeHint || value.constructor.name };
+        return { kind: "primitive", key, value: Number(value), type: displayType };
       } catch (e) {
-        return { kind: "primitive", key, value: String(value), type: typeHint || "number" };
+        return { kind: "primitive", key, value: String(value), type: displayType };
       }
+    }
+    // Fallback: ODC numeric wrappers with toNumber() (e.g. LongInteger with minified name)
+    if (typeof value.toNumber === "function") {
+      try {
+        return { kind: "primitive", key, value: value.toNumber(), type: typeHint || "Long Integer" };
+      } catch (_) { /* fall through */ }
     }
   }
 
