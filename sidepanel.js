@@ -264,8 +264,11 @@ async function doScanODC(result) {
   );
   screens.render();
 
-  // Discover live blocks from the fiber tree (works identically in ODC)
-  const liveResult = await sendMessage({ action: "DISCOVER_BLOCKS" }).catch(() => null);
+  // Discover live blocks and roles in parallel
+  const [liveResult, odcRolesResult] = await Promise.all([
+    sendMessage({ action: "DISCOVER_BLOCKS" }).catch(() => null),
+    sendMessage({ action: "ODC_SCAN_ROLES" }).catch(() => null),
+  ]);
   const liveBlocks = (liveResult?.ok && liveResult.blocks) ? liveResult.blocks : [];
 
   if (liveBlocks.length > 0) {
@@ -289,6 +292,27 @@ async function doScanODC(result) {
   } else {
     blocks.setData([], "", "", [], "odc");
     hide(blocks.sectionEl);
+  }
+
+  // Roles — discovered from ODC chunk exports
+  const odcRolesList = (odcRolesResult && odcRolesResult.ok) ? (odcRolesResult.roles || []) : [];
+  if (odcRolesList.length > 0) {
+    // Check user membership if roles were found
+    const userRolesResult = await sendMessage({
+      action: "ODC_CHECK_USER_ROLES",
+      roles: odcRolesList,
+    }).catch(() => null);
+
+    if (userRolesResult && userRolesResult.ok) {
+      for (const role of odcRolesList) {
+        role.userHasRole = !!userRolesResult.userRoles[role.name];
+      }
+    }
+    roles.setData(odcRolesList);
+    roles.render();
+  } else {
+    roles.setData([]);
+    hide(roles.sectionEl);
   }
 }
 
@@ -314,10 +338,14 @@ function buildStatusMessage(isODC) {
     const blkText = blkState.count === 1 ? "block" : "blocks";
     parts.push(`${blkState.count} ${blkText}`);
   }
+  const rolesState = roles.getState();
+  if (rolesState.count > 0) {
+    const rolesText = rolesState.count === 1 ? "role" : "roles";
+    parts.push(`${rolesState.count} ${rolesText}`);
+  }
   if (!isODC) {
     const seState = staticEntities.getState();
     const dmState = dataModels.getState();
-    const rolesState = roles.getState();
     const prodState = producers.getState();
     if (seState.count > 0) {
       const seText = seState.count === 1 ? "static entity" : "static entities";
@@ -326,10 +354,6 @@ function buildStatusMessage(isODC) {
     if (dmState.count > 0) {
       const dmText = dmState.count === 1 ? "entity/structure" : "entities/structures";
       parts.push(`${dmState.count} ${dmText}`);
-    }
-    if (rolesState.count > 0) {
-      const rolesText = rolesState.count === 1 ? "role" : "roles";
-      parts.push(`${rolesState.count} ${rolesText}`);
     }
     if (prodState.count > 0) {
       const prodText = prodState.count === 1 ? "producer" : "producers";
