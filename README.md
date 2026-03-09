@@ -1,6 +1,6 @@
-# OutSystems Reactive Toolkit — Chrome Extension
+# OutSystems Toolkit — Chrome Extension
 
-A Chrome side panel extension for inspecting and editing **OutSystems Reactive** application runtime data. It provides deep visibility into client variables, screen variables, block components, actions, aggregates, static entities, roles, and producer references — all from a convenient side panel.
+A Chrome side panel extension for inspecting and editing **OutSystems** application runtime data. It provides deep visibility into client variables, screen variables, block components, actions, aggregates, static entities, roles, and producer references — all from a convenient side panel.
 
 ## Features
 
@@ -66,8 +66,8 @@ Inspect and interact with **block component instances** live on the current scre
 
 ## Usage
 
-1. Navigate to an OutSystems Reactive application in your browser.
-2. Click the **OutSystems Reactive Toolkit** icon in the toolbar to open the side panel.
+1. Navigate to an OutSystems application in your browser.
+2. Click the **OutSystems Toolkit** icon in the toolbar to open the side panel.
 3. Click **Scan** to discover all runtime data on the current page.
 4. Use search bars and module filters to locate specific items.
 5. Click a variable value to edit it inline; use the tree-view popup for complex types.
@@ -154,7 +154,7 @@ Each section (`sections/*.js`) exports:
 ## Requirements
 
 - Chrome 116+ (or any Chromium-based browser with Side Panel API support)
-- The target page must be an OutSystems Reactive application that uses the AMD module loader
+- The target page must be an OutSystems application (Reactive or ODC)
 
 ## License
 

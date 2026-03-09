@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "OutSystems Reactive Toolkit",
+  "name": "OutSystems Toolkit",
   "version": "1.0.0",
-  "description": "View and edit OutSystems Reactive app client variables, list producer references, and navigate screens across all modules in a convenient side panel.",
+  "description": "View and edit OutSystems app client variables, list producer references, and navigate screens across all modules in a convenient side panel.",
   "permissions": [
     "activeTab",
     "scripting",
@@ -14,7 +14,7 @@
     "https://*/*"
   ],
   "action": {
-    "default_title": "Open OutSystems Reactive Toolkit",
+    "default_title": "Open OutSystems Toolkit",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
