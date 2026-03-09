@@ -227,12 +227,7 @@ function _osActionParamDeepSet(methodName, attrName, path, rawValue, dataType) {
       return { ok: true, newValue: newValue };
     }
 
-    var leafCurrentValue;
-    if (target && typeof target.get === "function" && !_isList(target)) {
-      leafCurrentValue = target.get(leafKey);
-    } else if (target) {
-      leafCurrentValue = target[leafKey];
-    }
+    var leafCurrentValue = _getLeafValue(target, leafKey);
     var coerced = _coerceValue(rawValue, dataType, leafCurrentValue);
     if (coerced.error) return { ok: false, error: coerced.error };
 

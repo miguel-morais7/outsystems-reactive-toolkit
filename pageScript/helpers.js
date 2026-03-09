@@ -535,6 +535,17 @@ function _detectOsType(value) {
   return "Text";
 }
 
+/**
+ * Read the current value at a leaf key from a target object/record.
+ * Handles both record .get() and plain property access.
+ */
+function _getLeafValue(target, key) {
+  if (target && typeof target.get === "function" && !_isList(target)) {
+    return target.get(key);
+  }
+  return target ? target[key] : undefined;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Value Coercion                                                     */
 /* ------------------------------------------------------------------ */
@@ -607,7 +618,7 @@ function _coerceNumericValue(raw, varType, currentValue) {
       if (converted !== undefined && converted !== null) {
         return { value: converted };
       }
-    } catch (e) { /* fall through */ }
+    } catch (e) { /* fall through to ODC wrapper or plain number */ }
   }
 
   // ODC: construct wrapper from the current value's constructor (or cached)
