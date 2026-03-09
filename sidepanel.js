@@ -75,10 +75,6 @@ async function doScan() {
     currentPlatform = result.platform || "unknown";
     const isODC = currentPlatform === "odc";
 
-    // Feed data into section modules
-    appmetadata.setData(result.appDefinition || null, result.platform);
-    appmetadata.render();
-
     if (isODC) {
       await doScanODC(result);
     } else {
@@ -99,10 +95,20 @@ async function doScan() {
  * Reactive scan flow: fetch static screen/role data, merge with runtime.
  */
 async function doScanReactive(result) {
-  const [screenResult, rolesResult] = await Promise.all([
+  const [screenResult, rolesResult, producersResult, appDefResult] = await Promise.all([
     sendMessage({ action: "FETCH_SCREENS" }).catch(() => null),
     sendMessage({ action: "FETCH_ROLES" }).catch(() => null),
+    sendMessage({ action: "DISCOVER_PRODUCER_RESOURCES" })
+      .then(res => res?.ok && Object.keys(res.resources).length > 0
+        ? sendMessage({ action: "FETCH_PRODUCERS", resources: res.resources })
+        : { ok: true, producerModules: [], producers: [] })
+      .catch(() => null),
+    sendMessage({ action: "SCAN_APP_DEFINITION" }).catch(() => null),
   ]);
+
+  // App metadata (from page-injected appDefinition scan)
+  appmetadata.setData(appDefResult?.appDefinition || null, result.platform);
+  appmetadata.render();
 
   // Kick off block discovery and user-role checking in parallel.
   const liveBlocksPromise = sendMessage({ action: "DISCOVER_BLOCKS" }).catch(() => null);
@@ -209,7 +215,7 @@ async function doScanReactive(result) {
   }
 
   // Producers
-  producers.setData(result.producers || [], result.producerModules || []);
+  producers.setData(producersResult?.producers || [], producersResult?.producerModules || []);
   producers.populateModuleFilter();
   producers.render();
 
@@ -232,6 +238,10 @@ async function doScanReactive(result) {
  * data models, roles, producers).
  */
 async function doScanODC(result) {
+  // App metadata — ODC has no appDefinition module
+  appmetadata.setData(null, "odc");
+  appmetadata.render();
+
   // Client variables — now supported on ODC via _osOdcClientVarsScan
   variables.setData(result.variables || [], result.modules || []);
   variables.populateModuleFilter();

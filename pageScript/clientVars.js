@@ -10,8 +10,6 @@
  *   - _osOdcClientVarsScan()    (ODC)
  *   - _osOdcClientVarsSet()     (ODC)
  *   - _osOdcClientVarsGet()     (ODC)
- *   - _osProducersScan()
- *   - _osAppDefinitionScan()
  */
 
 /* ------------------------------------------------------------------ */
@@ -20,10 +18,6 @@
 function _osClientVarsScan() {
   return new Promise(async (resolve) => {
     const SCAN_TIMEOUT_MS = 10000;
-
-    // Scan client variables, producers, and app definition in parallel
-    const producersPromise = _osProducersScan();
-    const appDefPromise = _osAppDefinitionScan();
 
     // 1. Find all *.clientVariables.js resource entries
     const scripts = performance.getEntriesByType("resource");
@@ -43,16 +37,7 @@ function _osClientVarsScan() {
     });
 
     if (moduleMap.size === 0) {
-      // Still wait for parallel scans even if no client vars
-      const [producersData, appDefData] = await Promise.all([producersPromise, appDefPromise]);
-      resolve({
-        ok: true,
-        modules: [],
-        variables: [],
-        producerModules: producersData.producerModules || [],
-        producers: producersData.producers || [],
-        appDefinition: appDefData.appDefinition || null
-      });
+      resolve({ ok: true, modules: [], variables: [] });
       return;
     }
 
@@ -62,7 +47,7 @@ function _osClientVarsScan() {
     let remaining = moduleNames.length;
     let resolved = false;
 
-    async function finalize() {
+    function finalize() {
       if (resolved) return;
       resolved = true;
       const moduleList = [...new Set(allVars.map((v) => v.module))].sort();
@@ -72,17 +57,7 @@ function _osClientVarsScan() {
           : a.module.localeCompare(b.module)
       );
 
-      // Wait for parallel scans to complete
-      const [producersData, appDefData] = await Promise.all([producersPromise, appDefPromise]);
-
-      resolve({
-        ok: true,
-        modules: moduleList,
-        variables: allVars,
-        producerModules: producersData.producerModules || [],
-        producers: producersData.producers || [],
-        appDefinition: appDefData.appDefinition || null
-      });
+      resolve({ ok: true, modules: moduleList, variables: allVars });
     }
     // Capture the OutSystems runtime reference for date/time conversion
     try {
@@ -205,96 +180,6 @@ function _osClientVarsGet(moduleName, varName) {
   } catch (e) {
     return { ok: false, error: e.message };
   }
-}
-
-/* ------------------------------------------------------------------ */
-/*  SCAN PRODUCERS — discover producer references from referencesHealth.js */
-/* ------------------------------------------------------------------ */
-function _osProducersScan() {
-  return new Promise((resolve) => {
-    const SCAN_TIMEOUT_MS = 10000;
-
-    // 1. Find all *.referencesHealth.js resource entries
-    const scripts = performance.getEntriesByType("resource");
-    const resourceMap = new Map();
-
-    scripts.forEach((entry) => {
-      if (
-        entry.initiatorType === "script" &&
-        entry.name.includes("referencesHealth.js")
-      ) {
-        const matches = entry.name.match(/([^\/]+)\.referencesHealth\.js/);
-        if (matches && matches[1]) {
-          const moduleName = matches[1];
-          resourceMap.set(moduleName, entry.name);
-        }
-      }
-    });
-
-    if (resourceMap.size === 0) {
-      resolve({ ok: true, producerModules: [], producers: [] });
-      return;
-    }
-
-    // 2. Fetch each referencesHealth.js file and parse producer references
-    const allProducers = [];
-    let remaining = resourceMap.size;
-    let resolved = false;
-
-    function finalize() {
-      if (resolved) return;
-      resolved = true;
-      const producerModuleList = [...new Set(allProducers.map((p) => p.module))].sort();
-      allProducers.sort((a, b) =>
-        a.module === b.module
-          ? a.producer.localeCompare(b.producer)
-          : a.module.localeCompare(b.module)
-      );
-      resolve({ ok: true, producerModules: producerModuleList, producers: allProducers });
-    }
-
-    // Safety timeout
-    setTimeout(() => {
-      if (!resolved) {
-        console.warn("[OS Producers] Scan timed out after " + SCAN_TIMEOUT_MS + "ms. Returning partial results.");
-        finalize();
-      }
-    }, SCAN_TIMEOUT_MS);
-
-    resourceMap.forEach((url, moduleName) => {
-      fetch(url)
-        .then((response) => response.text())
-        .then((content) => {
-          const definePattern = /define\s*\(\s*["']([^"']+\.referencesHealth\$([^"']+))["']\s*,\s*\[[^\]]*\]\s*,\s*function\s*\([^)]*\)\s*\{([^}]*)\}/g;
-          let match;
-
-          while ((match = definePattern.exec(content)) !== null) {
-            const producerName = match[2];
-            const functionBody = match[3];
-
-            let status = "Unknown";
-            const statusMatch = functionBody.match(/\/\/\s*Reference to producer ['"]([^'"]+)['"] is (\w+)\./);
-            if (statusMatch) {
-              status = statusMatch[2];
-            }
-
-            allProducers.push({
-              module: moduleName,
-              producer: producerName,
-              status: status,
-            });
-          }
-
-          remaining--;
-          if (remaining === 0) finalize();
-        })
-        .catch((err) => {
-          console.warn("[OS Producers] Failed to fetch " + url + ": " + err.message);
-          remaining--;
-          if (remaining === 0) finalize();
-        });
-    });
-  });
 }
 
 /* ================================================================== */
@@ -527,75 +412,3 @@ function _osOdcClientVarsGet(moduleName, varName) {
   }
 }
 
-/* ------------------------------------------------------------------ */
-/*  SCAN APP DEFINITION — discover appDefinition module metadata       */
-/* ------------------------------------------------------------------ */
-function _osAppDefinitionScan() {
-  return new Promise((resolve) => {
-    const SCAN_TIMEOUT_MS = 5000;
-
-    // 1. Find *.appDefinition.js resource entry
-    const scripts = performance.getEntriesByType("resource");
-    let moduleName = null;
-
-    for (const entry of scripts) {
-      if (
-        entry.initiatorType === "script" &&
-        entry.name.includes("appDefinition.js")
-      ) {
-        const matches = entry.name.match(/([^\/]+)\.appDefinition\.js/);
-        if (matches && matches[1]) {
-          moduleName = matches[1] + ".appDefinition";
-          break;
-        }
-      }
-    }
-
-    if (!moduleName) {
-      resolve({ ok: true, appDefinition: null });
-      return;
-    }
-
-    let resolved = false;
-
-    // Safety timeout
-    setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        resolve({ ok: true, appDefinition: null });
-      }
-    }, SCAN_TIMEOUT_MS);
-
-    // 2. require() the AMD module
-    try {
-      require([moduleName], function (mod) {
-        if (resolved) return;
-        resolved = true;
-
-        // Clone to a plain object for safe serialization across worlds
-        const appDef = {};
-        for (const key in mod) {
-          if (Object.prototype.hasOwnProperty.call(mod, key)) {
-            const val = mod[key];
-            if (val === null || typeof val !== "object") {
-              appDef[key] = val;
-            } else {
-              try {
-                appDef[key] = JSON.parse(JSON.stringify(val));
-              } catch {
-                appDef[key] = String(val);
-              }
-            }
-          }
-        }
-
-        resolve({ ok: true, appDefinition: appDef });
-      });
-    } catch (e) {
-      if (!resolved) {
-        resolved = true;
-        resolve({ ok: true, appDefinition: null });
-      }
-    }
-  });
-}

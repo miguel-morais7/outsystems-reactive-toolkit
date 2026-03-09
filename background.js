@@ -10,7 +10,7 @@
  * eliminating repetitive handler boilerplate.
  */
 
-import { fetchScreens, fetchRoles, fetchScreenDetails } from './background/parsers.js';
+import { fetchScreens, fetchRoles, fetchScreenDetails, fetchProducers } from './background/parsers.js';
 
 /* ------------------------------------------------------------------ */
 /*  Open the side panel when the toolbar icon is clicked                */
@@ -110,6 +110,8 @@ async function doInjection(tabId) {
         "pageScript/serverActions.js",
         "pageScript/builtinFunctions.js",
         "pageScript/roles.js",
+        "pageScript/producers.js",
+        "pageScript/appDefinition.js",
       ],
     });
   }
@@ -208,6 +210,8 @@ const PAGE_ACTIONS = {
   GET_BUILTIN_FUNCTIONS:     { func: () => _osBuiltinFunctionsGet(),                                                args: () => [] },
   OVERRIDE_BUILTIN_FUNCTIONS:{ func: (o) => _osBuiltinFunctionsOverride(o),                                         args: msg => [msg.overrides] },
   RESTORE_BUILTIN_FUNCTIONS: { func: (n) => _osBuiltinFunctionRestore(n),                                           args: msg => [msg.name] },
+  DISCOVER_PRODUCER_RESOURCES:{ func: () => _osProducerResourceUrls(),                                                args: () => [] },
+  SCAN_APP_DEFINITION:       { func: () => _osAppDefinitionScan(),                                                   args: () => [] },
 };
 
 /**
@@ -217,6 +221,7 @@ const PAGE_ACTIONS = {
 const SPECIAL_ACTIONS = {
   FETCH_SCREENS:        () => getActiveTab().then(tab => fetchScreens(tab.url)),
   FETCH_ROLES:          () => getActiveTab().then(tab => fetchRoles(tab.url)),
+  FETCH_PRODUCERS:      msg => fetchProducers(msg.resources),
   FETCH_SCREEN_DETAILS: msg => fetchScreenDetails(msg.baseUrl, msg.moduleName, msg.flow, msg.screenName, msg.controllerModuleName),
   FETCH_BLOCK_DETAILS:  msg => fetchScreenDetails(msg.baseUrl, msg.moduleName, null, null, msg.controllerModuleName),
   NAVIGATE:             msg => handleNavigate(msg.url),
