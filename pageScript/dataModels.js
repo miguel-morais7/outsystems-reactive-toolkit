@@ -138,7 +138,8 @@ async function _osOdcDataModelsScan(moduleName) {
         seenNames[displayName] = true;
 
         // Extract attributes
-        var attributes = _osOdcExtractModelAttributes(val);
+        var attributes;
+        try { attributes = _osOdcExtractModelAttributes(val); } catch (_) { attributes = []; }
 
         dataModels.push({
           name: displayName,

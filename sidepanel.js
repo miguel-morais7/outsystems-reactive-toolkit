@@ -310,6 +310,7 @@ async function doScanODC(result) {
     dataModels.render();
   } else {
     dataModels.setData([]);
+    dataModels.populateModuleFilter();
     hide(dataModels.sectionEl);
   }
 
