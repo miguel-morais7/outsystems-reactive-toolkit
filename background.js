@@ -110,6 +110,8 @@ async function doInjection(tabId) {
         "pageScript/serverActions.js",
         "pageScript/builtinFunctions.js",
         "pageScript/roles.js",
+        "pageScript/producers.js",
+        "pageScript/appDefinition.js",
       ],
     });
   }
@@ -208,6 +210,8 @@ const PAGE_ACTIONS = {
   GET_BUILTIN_FUNCTIONS:     { func: () => _osBuiltinFunctionsGet(),                                                args: () => [] },
   OVERRIDE_BUILTIN_FUNCTIONS:{ func: (o) => _osBuiltinFunctionsOverride(o),                                         args: msg => [msg.overrides] },
   RESTORE_BUILTIN_FUNCTIONS: { func: (n) => _osBuiltinFunctionRestore(n),                                           args: msg => [msg.name] },
+  SCAN_PRODUCERS:            { func: () => _osProducersScan(),                                                       args: () => [] },
+  SCAN_APP_DEFINITION:       { func: () => _osAppDefinitionScan(),                                                   args: () => [] },
 };
 
 /**
