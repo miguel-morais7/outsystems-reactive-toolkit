@@ -40,7 +40,7 @@ function _osScreenVarsGet(varDefs, viewIndex) {
             return {
               name: attr.name || attr.attrName,
               internalName: attr.attrName,
-              type: _DATA_TYPE_NAMES[attr.dataType] || "Text",
+              type: _getDataTypeName(attr.dataType) || "Text",
               isInput: false,
             };
           });
@@ -206,12 +206,7 @@ function _osScreenVarDeepSet(internalName, path, rawValue, dataType, viewIndex) 
       return { ok: true, newValue };
     }
 
-    let leafCurrentValue;
-    if (target && typeof target.get === "function" && !_isList(target)) {
-      leafCurrentValue = target.get(leafKey);
-    } else if (target) {
-      leafCurrentValue = target[leafKey];
-    }
+    const leafCurrentValue = _getLeafValue(target, leafKey);
     const coerced = _coerceValue(rawValue, dataType, leafCurrentValue);
     if (coerced.error) return { ok: false, error: coerced.error };
 

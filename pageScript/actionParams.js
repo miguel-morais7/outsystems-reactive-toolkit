@@ -122,7 +122,7 @@ function _osActionParamInit(methodName, attrName, maxListItems, viewIndex) {
     }
 
     // Strategy 3: For lists, try to create an empty list
-    if (defaultValue === null && _DATA_TYPE_NAMES[targetAttr.dataType] === "RecordList") {
+    if (defaultValue === null && _getDataTypeName(targetAttr.dataType) === "RecordList") {
       try {
         if (window.__osRuntime && window.__osRuntime.DataStructures) {
           defaultValue = new window.__osRuntime.DataStructures.DataRecord.DataRecordList();
@@ -227,12 +227,7 @@ function _osActionParamDeepSet(methodName, attrName, path, rawValue, dataType) {
       return { ok: true, newValue: newValue };
     }
 
-    var leafCurrentValue;
-    if (target && typeof target.get === "function" && !_isList(target)) {
-      leafCurrentValue = target.get(leafKey);
-    } else if (target) {
-      leafCurrentValue = target[leafKey];
-    }
+    var leafCurrentValue = _getLeafValue(target, leafKey);
     var coerced = _coerceValue(rawValue, dataType, leafCurrentValue);
     if (coerced.error) return { ok: false, error: coerced.error };
 
