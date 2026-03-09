@@ -240,6 +240,8 @@ async function doScanODC(result) {
   hide(staticEntities.sectionEl);
   dataModels.setData([]);
   hide(dataModels.sectionEl);
+  roles.setData([]);
+  hide(roles.sectionEl);
   producers.setData([], []);
   hide(producers.sectionEl);
   builtinFunctions.setData([]);
