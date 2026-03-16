@@ -33,8 +33,7 @@ export function render() {
   }
 
   if (state.selectedRoles.length > 0) {
-    const selected = new Set(state.selectedRoles);
-    filtered = filtered.filter(s => s.roles && s.roles.some(r => selected.has(r)));
+    filtered = filtered.filter(s => s.roles && state.selectedRoles.every(r => s.roles.includes(r)));
   }
 
   screenCount.textContent = filtered.length;
