@@ -338,11 +338,11 @@ async function doScanODC(result) {
     }
     for (const s of screenList) {
       if (s.roles && s.roles.length > 0) continue;
-      var urlKey = (s.screenUrl || "").toLowerCase();
+      const urlKey = (s.screenUrl || "").toLowerCase();
       if (urlKey && rolesByPath[urlKey]) { s.roles = rolesByPath[urlKey]; continue; }
-      var fullKey = (s.fullName || "").toLowerCase();
+      const fullKey = (s.fullName || "").toLowerCase();
       if (fullKey && rolesByFullName[fullKey]) { s.roles = rolesByFullName[fullKey]; continue; }
-      var nameKey = (s.name || "").toLowerCase();
+      const nameKey = (s.name || "").toLowerCase();
       if (nameKey && rolesByPath[nameKey]) { s.roles = rolesByPath[nameKey]; }
     }
   }

@@ -220,7 +220,10 @@ async function _osOdcScreenRolesScan() {
       routes.push({ path: m[1], screenName: m[2], chunkPath: m[3] });
     }
 
-    if (routes.length === 0) return { ok: true, screenRoles: [] };
+    if (routes.length === 0) {
+      console.warn("[OS Toolkit] ODC bundle found but no screen routes matched — bundle format may have changed");
+      return { ok: true, screenRoles: [] };
+    }
 
     // 3. Resolve chunk paths to absolute URLs and import in parallel
     var base = bundleUrl.substring(0, bundleUrl.lastIndexOf("/") + 1);
