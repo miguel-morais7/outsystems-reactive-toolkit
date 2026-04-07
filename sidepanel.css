@@ -1607,6 +1607,37 @@ body {
   border: 1px solid rgba(201, 42, 42, 0.2);
 }
 
+/* Block location badges (content / layout / popup) */
+.block-location-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.block-location-content {
+  background: rgba(6, 95, 70, 0.1);
+  color: #065f46;
+  border: 1px solid rgba(6, 95, 70, 0.2);
+}
+
+.block-location-layout {
+  background: rgba(99, 102, 241, 0.1);
+  color: #4338ca;
+  border: 1px solid rgba(99, 102, 241, 0.2);
+}
+
+.block-location-popup {
+  background: rgba(217, 119, 6, 0.1);
+  color: #b45309;
+  border: 1px solid rgba(217, 119, 6, 0.2);
+}
+
 .block-tree-children {
   overflow: hidden;
 }

@@ -167,6 +167,13 @@ async function doScanReactive(result) {
         if (basePath === attr || basePath.endsWith("." + attr)) return true;
       }
       return false;
+    }).map(b => {
+      const basePath = b.controllerModuleName.replace(/\.mvc\$controller$/, "");
+      const lb = liveBlocks.find(lb =>
+        (lb.modulePath && basePath === lb.modulePath) ||
+        (lb.dataBlockAttr && (basePath === lb.dataBlockAttr || basePath.endsWith("." + lb.dataBlockAttr)))
+      );
+      return lb?.location ? { ...b, location: lb.location } : b;
     });
 
     blocks.setData(
@@ -372,6 +379,7 @@ async function doScanODC(result) {
         group: module,
         fullName: (path || "block") + "#" + lb.viewIndex,
         viewIndex: lb.viewIndex,
+        location: lb.location || "content",
       };
     });
     blocks.setData(odcBlocks, "", moduleName, liveBlocks, "odc");

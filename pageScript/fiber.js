@@ -299,13 +299,13 @@ function _findViewInstanceByIndex(viewIndex, expectedModulePath) {
 }
 
 /**
- * Discover block view instances that belong to the current screen's content.
+ * Discover ALL block view instances on the current page.
  * Returns serializable metadata (no viewInstance references — they can't cross
  * the Chrome messaging boundary).
  *
- * Scopes to the screen's <main> content area to exclude layout blocks
- * (header, menu, footer).  Falls back to all non-screen view instances
- * when the <main> element is not found.
+ * Each block includes a `location` field indicating its DOM zone:
+ * "content" (inside <main>), "popup" (inside .popup-dialog), or "layout"
+ * (header, menu, footer, or other structural blocks outside the content area).
  */
 function _osDiscoverBlocks() {
   try {
@@ -314,28 +314,30 @@ function _osDiscoverBlocks() {
       return { ok: true, blocks: [] };
     }
 
-    // Build a Map of controller → data-block attribute from the content area
-    var contentViews = _findContentAreaViewInstances();
+    // Map ALL controllers to their data-block attribute (full page scan)
+    var allDataBlocks = _findAllDataBlockMappings();
+    // Classify each controller by DOM location zone
+    var locationMap = _buildLocationMap();
 
     var blocks = [];
     for (var i = 1; i < all.length; i++) {
       var entry = all[i];
       var ctrl = entry.viewInstance.controller;
-      // If we found content-area views, filter to only those
-      if (contentViews && !contentViews.has(ctrl)) continue;
 
       var proto = Object.getPrototypeOf(ctrl);
       var modulePath = _extractModulePath(proto);
 
       // data-block attribute (e.g. "WebBlocks.PickzoneIdCombo") serves as
       // a fallback identifier when _extractModulePath cannot find the path.
-      var dataBlockAttr = contentViews ? (contentViews.get(ctrl) || "") : "";
+      var dataBlockAttr = allDataBlocks.get(ctrl) || "";
+      var location = locationMap.get(ctrl) || "layout";
 
       blocks.push({
         viewIndex: entry.viewIndex,
         depth: entry.depth,
         modulePath: modulePath,
         dataBlockAttr: dataBlockAttr,
+        location: location,
       });
     }
 
@@ -392,6 +394,51 @@ function _findContentAreaViewInstances() {
     }
   }
   return views;
+}
+
+/**
+ * Walk from a [data-block] DOM element up the fiber tree to find the nearest
+ * view controller.  Returns the controller object, or null if not found.
+ */
+function _controllerFromBlockEl(el) {
+  var fiber = _getReactFiber(el);
+  if (!fiber) return null;
+  var current = fiber;
+  while (current) {
+    var view = _getViewFromFiber(current);
+    if (view) return view.controller;
+    current = current.return;
+  }
+  return null;
+}
+
+/**
+ * Build a Map of controller → location zone ("content", "popup", or absent
+ * for layout).  Popup classification runs second so a block inside both
+ * <main> and .popup-dialog correctly gets "popup".
+ */
+function _buildLocationMap() {
+  var map = new Map();
+  var contentArea = document.querySelector("main") || document.querySelector("[role='main']");
+  var popupDialogs = document.querySelectorAll(".popup-dialog");
+
+  if (contentArea) {
+    var contentBlocks = contentArea.querySelectorAll("[data-block]");
+    for (var c = 0; c < contentBlocks.length; c++) {
+      var ctrl = _controllerFromBlockEl(contentBlocks[c]);
+      if (ctrl) map.set(ctrl, "content");
+    }
+  }
+
+  for (var p = 0; p < popupDialogs.length; p++) {
+    var popupBlocks = popupDialogs[p].querySelectorAll("[data-block]");
+    for (var pb = 0; pb < popupBlocks.length; pb++) {
+      var ctrl = _controllerFromBlockEl(popupBlocks[pb]);
+      if (ctrl) map.set(ctrl, "popup");
+    }
+  }
+
+  return map;
 }
 
 /**
