@@ -231,7 +231,14 @@ export async function enrichServerActions(details, viewIndex) {
       if (runtime) {
         sa.methodName = runtime.methodName;
         if (runtime.inputs && runtime.inputs.length > 0) {
-          sa.inputs = runtime.inputs;
+          // Only overwrite static inputs with runtime inputs if the runtime
+          // actually matched the ServerDataConverter pattern (not the fallback).
+          // Fallback inputs have name === paramName for every entry (they just
+          // copy the function signature param names and default to "Text").
+          const isFallback = runtime.inputs.every(inp => inp.name === inp.paramName);
+          if (!isFallback || !sa.inputs || sa.inputs.length === 0) {
+            sa.inputs = runtime.inputs;
+          }
         }
         if (runtime.outputs && runtime.outputs.length > 0) {
           sa.outputs = runtime.outputs;

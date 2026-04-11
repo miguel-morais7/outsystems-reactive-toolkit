@@ -56,7 +56,7 @@ function _osServerActionsGet(viewIndex) {
 
       // Parse inputs from ServerDataConverter.to(paramVar, OS.DataTypes.DataTypes.TYPE)
       var inputs = [];
-      var inputPattern = /(\w+)\s*:\s*\w+\.ServerDataConverter\.to\s*\(\s*(\w+)\s*,\s*\w+\.DataTypes\.(\w+)\s*\)/g;
+      var inputPattern = /(\w+)\s*:\s*[\w.]+\.ServerDataConverter\.to\s*\(\s*(\w+)\s*,\s*[\w.]+\.DataTypes\.(\w+)\s*\)/g;
       var inputMatch;
       while ((inputMatch = inputPattern.exec(src)) !== null) {
         inputs.push({
