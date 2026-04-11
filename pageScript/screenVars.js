@@ -203,10 +203,12 @@ function _osScreenVarDeepSet(internalName, path, rawValue, dataType, viewIndex) 
       const coerced = _coerceValue(rawValue, dataType, listCurrentValue);
       if (coerced.error) return { ok: false, error: coerced.error };
 
+      // Legacy wrapper lists use .setItem(index, value); new API lists use
+      // .set(index, value). Try both in order.
       if (typeof target.setItem === "function") {
         target.setItem(leafKey.index, coerced.value);
-      } else if (typeof target.data === "object" && typeof target.data.set === "function") {
-        target.data.set(leafKey.index, coerced.value);
+      } else if (typeof target.set === "function") {
+        target.set(leafKey.index, coerced.value);
       } else {
         return { ok: false, error: "No setItem/set method found on the list." };
       }
