@@ -136,6 +136,30 @@ function _getRecordFieldTypes(recordInstance) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Numeric Wrapper Type Detection                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Detect the specific type of an OS numeric wrapper object (Decimal, Currency, or Long Integer).
+ * Constructor names are often minified, so uses duck-typing as fallback:
+ * - Decimal instances have "add" as an own property; LongInteger does not.
+ * - Currency shares the Decimal constructor in the OS runtime.
+ *
+ * @param {Object} value - An OS numeric wrapper with internalValue
+ * @returns {string} "Decimal", "Currency", or "Long Integer"
+ */
+function _detectNumericWrapperType(value) {
+  // Named constructor check (non-minified builds, including ODC "LongInteger" without space)
+  var ctorName = (value.constructor && value.constructor.name) || "";
+  if (/^(Decimal|Currency|Long ?Integer)/.test(ctorName)) {
+    return ctorName.replace("LongInteger", "Long Integer");
+  }
+  // Duck-type: Decimal (and Currency) have "add" as own property, LongInteger does not
+  if (value.hasOwnProperty("add")) return "Decimal";
+  return "Long Integer";
+}
+
+/* ------------------------------------------------------------------ */
 /*  Introspection — recursive tree building                            */
 /* ------------------------------------------------------------------ */
 
@@ -185,7 +209,8 @@ function _introspectValue(value, key, depth, maxListItems, typeHint) {
   // OutSystems numeric wrapper (Decimal, Currency, LongInteger): has own .internalValue property
   if (value.hasOwnProperty("internalValue") && typeof value.toString === "function") {
     try {
-      return { kind: "primitive", key, value: _safeSerialize(value), type: typeHint || "Long Integer" };
+      var wrapperType = _detectNumericWrapperType(value);
+      return { kind: "primitive", key, value: _safeSerialize(value), type: typeHint || wrapperType };
     } catch (_) { /* fall through */ }
   }
 
@@ -206,7 +231,7 @@ function _introspectValue(value, key, depth, maxListItems, typeHint) {
     // Fallback: ODC numeric wrappers with toNumber() (e.g. LongInteger with minified name)
     if (typeof value.toNumber === "function") {
       try {
-        return { kind: "primitive", key, value: value.toNumber(), type: typeHint || "Long Integer" };
+        return { kind: "primitive", key, value: value.toNumber(), type: typeHint || _detectNumericWrapperType(value) };
       } catch (_) { /* fall through */ }
     }
   }
@@ -392,7 +417,8 @@ function _appendToList(list) {
         } else if (template.constructor && template.constructor !== Object) {
           // Prefer constructor over clone — clone copies current state of the
           // (possibly shared/dirty) template, while the constructor gives fresh defaults
-          newItem = new template.constructor();
+          try { newItem = new template.constructor(); }
+          catch (_) { newItem = template; }
         } else {
           newItem = template;
         }
@@ -408,7 +434,8 @@ function _appendToList(list) {
         if (typeof template2 !== "object" && typeof template2 !== "function") {
           newItem = _primitiveDefault(template2);
         } else if (template2.constructor && template2.constructor !== Object) {
-          newItem = new template2.constructor();
+          try { newItem = new template2.constructor(); }
+          catch (_) { newItem = template2; }
         } else {
           newItem = template2;
         }
@@ -422,7 +449,8 @@ function _appendToList(list) {
       var sample = _listGet(list, 0);
       if (sample !== null && typeof sample === "object" &&
           sample.constructor && sample.constructor !== Object) {
-        newItem = new sample.constructor();
+        try { newItem = new sample.constructor(); }
+        catch (_) { newItem = sample; }
       }
     } catch (_) { /* fall through */ }
   }
