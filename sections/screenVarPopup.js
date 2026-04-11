@@ -26,9 +26,9 @@ let popupState = null; // { internalName, name, type, basePath?, viewIndex? } or
 export function initPopupListeners(overlayEl) {
   popupOverlay = overlayEl;
 
-  /* Close popup: click backdrop or close button */
+  /* Close popup: close button only */
   popupOverlay.addEventListener("click", (e) => {
-    if (e.target === popupOverlay || e.target.closest(".var-popup-close")) {
+    if (e.target.closest(".var-popup-close")) {
       closeVarPopup();
       return;
     }
