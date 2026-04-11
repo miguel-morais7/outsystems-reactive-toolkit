@@ -24,8 +24,8 @@ export function initBlockTreePopup(overlayEl) {
   popupOverlay = overlayEl;
 
   popupOverlay.addEventListener("click", (e) => {
-    /* Close popup: click backdrop or close button */
-    if (e.target === popupOverlay || e.target.closest(".var-popup-close")) {
+    /* Close popup: close button only */
+    if (e.target.closest(".var-popup-close")) {
       closePopup();
       return;
     }
