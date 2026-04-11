@@ -16,7 +16,7 @@ let allRoles = [];
 /* ================================================================== */
 /*  DOM references                                                     */
 /* ================================================================== */
-const inputSearch = document.getElementById("input-search-roles");
+const inputSearch = document.getElementById("input-search-roles-section");
 const roleList = document.getElementById("role-list");
 const roleCount = document.getElementById("role-count");
 const emptyState = document.getElementById("empty-state");
